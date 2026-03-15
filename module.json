@@ -12,6 +12,8 @@
     "minimum": "13",
     "verified": "13"
   },
+  "manifest": "https://raw.githubusercontent.com/elliot-tingey/sf2eShipCombatFTL/refs/heads/main/module.json",
+  "download": "https://github.com/elliot-tingey/sf2eShipCombatFTL/archive/refs/heads/main.zip",
   "esmodules": [
     "scripts/main.js"
   ],
