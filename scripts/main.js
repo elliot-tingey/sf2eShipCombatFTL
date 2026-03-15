@@ -34,17 +34,50 @@ Hooks.once("init", () => {
 Hooks.once("ready", () => {
   console.log(`${MODULE_ID} | Module ready`);
 
+  // Verify starship actor type is available
+  const typeExists = "starship" in (CONFIG.Actor.dataModels ?? {});
+  const labelExists = CONFIG.Actor.typeLabels?.starship;
+  if (typeExists && labelExists) {
+    console.log(`${MODULE_ID} | ✓ Starship actor type is registered and available`);
+  } else {
+    console.warn(`${MODULE_ID} | ⚠ Starship type may not be available in the actor creation dialog.`);
+    console.warn(`${MODULE_ID} |   typeLabels: ${labelExists ? "OK" : "MISSING"}, dataModels: ${typeExists ? "OK" : "MISSING"}`);
+    console.warn(`${MODULE_ID} |   If the sf2e system overrides actor types, you may need to create a "vehicle" type actor and manually set its type to "starship" via the console.`);
+
+    // Diagnostic: show what types are available
+    console.log(`${MODULE_ID} |   Available actor types:`, Object.keys(CONFIG.Actor.typeLabels ?? {}));
+    console.log(`${MODULE_ID} |   Available data models:`, Object.keys(CONFIG.Actor.dataModels ?? {}));
+
+    // Show a user-friendly notification
+    if (game.user.isGM) {
+      ui.notifications.info(
+        `Starship Combat: If "Starship" doesn't appear as an actor type, open the console (F12) for troubleshooting info.`,
+        { permanent: false }
+      );
+    }
+  }
+
   // Global API
   game.modules.get(MODULE_ID).api = {
     openCombatUI: () => getCombatUI().render({ force: true }),
     getCombatUI,
-    getCombatManager: () => CombatManager.get()
+    getCombatManager: () => CombatManager.get(),
+    // Manual starship creation helper
+    createStarship: async (name = "New Starship") => {
+      const actor = await Actor.create({ name, type: "starship" });
+      if (actor) {
+        ui.notifications.info(`Created starship: ${name}`);
+        actor.sheet.render(true);
+      }
+      return actor;
+    }
   };
 
   globalThis.StarshipCombat = {
     open: () => getCombatUI().render({ force: true }),
     close: () => { if (_combatUI) _combatUI.close(); },
-    manager: () => CombatManager.get()
+    manager: () => CombatManager.get(),
+    createShip: async (name) => game.modules.get(MODULE_ID).api.createStarship(name)
   };
 });
 

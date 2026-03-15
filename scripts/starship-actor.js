@@ -63,17 +63,12 @@ export class StarshipDataModel extends foundry.abstract.TypeDataModel {
 
 // ── Actor Sheet ─────────────────────────────────────────────────────────────
 
-const { HandlebarsApplicationMixin, ApplicationV2 } = foundry.applications.api;
+const { HandlebarsApplicationMixin } = foundry.applications.api;
 
-export class StarshipSheet extends HandlebarsApplicationMixin(ApplicationV2) {
+export class StarshipSheet extends HandlebarsApplicationMixin(foundry.applications.sheets.ActorSheetV2) {
 
   static DEFAULT_OPTIONS = {
-    tag: "form",
-    form: {
-      submitOnChange: true
-    },
     window: {
-      title: "Starship",
       icon: "fas fa-rocket",
       resizable: true
     },
@@ -81,7 +76,10 @@ export class StarshipSheet extends HandlebarsApplicationMixin(ApplicationV2) {
       width: 680,
       height: 720
     },
-    classes: ["starship-sheet-app"]
+    classes: ["starship-sheet-app"],
+    form: {
+      submitOnChange: true
+    }
   };
 
   static PARTS = {
@@ -146,34 +144,41 @@ export class StarshipSheet extends HandlebarsApplicationMixin(ApplicationV2) {
     };
     return ctx;
   }
-
-  // Form submission
-  async _processFormData(event, form, formData) {
-    // Handle form updates
-  }
 }
 
 
 // ── Registration ────────────────────────────────────────────────────────────
 
 export function registerStarshipActor() {
-  // Register the data model for the "starship" actor subtype
-  // This approach works if the system allows custom types or we use the "base" type
-  // For sf2e, we'll register as a new subtype using CONFIG
+  const typeKey = "starship";
 
-  // Try to register under the system's actor types
-  Object.assign(CONFIG.Actor.dataModels, {
-    starship: StarshipDataModel
-  });
+  // 1. Register the type label — this makes it appear in the "Create Actor" dialog dropdown
+  if (!CONFIG.Actor.typeLabels) CONFIG.Actor.typeLabels = {};
+  CONFIG.Actor.typeLabels[typeKey] = "Starship";
 
-  // Register the sheet
+  // 2. Register the type icon — shows in the actor directory
+  if (!CONFIG.Actor.typeIcons) CONFIG.Actor.typeIcons = {};
+  CONFIG.Actor.typeIcons[typeKey] = "fas fa-rocket";
+
+  // 3. Register the TypeDataModel — defines the schema for this actor type
+  if (!CONFIG.Actor.dataModels) CONFIG.Actor.dataModels = {};
+  CONFIG.Actor.dataModels[typeKey] = StarshipDataModel;
+
+  // 4. Register the sheet class
   Actors.registerSheet(MODULE_ID, StarshipSheet, {
-    types: ["starship"],
+    types: [typeKey],
     makeDefault: true,
     label: "Starship Sheet (FTL)"
   });
 
-  console.log(`${MODULE_ID} | Registered Starship actor type and sheet`);
+  // 5. Set a default icon for newly created starship actors
+  Hooks.on("preCreateActor", (actor, data) => {
+    if (data.type === typeKey && !data.img) {
+      actor.updateSource({ img: "icons/svg/ship.svg" });
+    }
+  });
+
+  console.log(`${MODULE_ID} | Registered Starship actor type: label, icon, data model, and sheet`);
 }
 
 /**
