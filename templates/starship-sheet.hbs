@@ -2,11 +2,11 @@
   <header class="sc-sheet-header">
     <img class="sc-sheet-portrait" src="{{img}}" alt="{{name}}" />
     <div class="sc-sheet-title">
-      <h1 contenteditable="true" data-field="name">{{name}}</h1>
+      <h1>{{name}}</h1>
       <div class="sc-sheet-stats-row">
         <span class="sc-stat-badge">AC <strong>{{ac}}</strong></span>
         <span class="sc-stat-badge">TL <strong>{{tl}}</strong></span>
-        <span class="sc-stat-badge sc-hull-badge">Hull <strong>{{system.hull.current}}/{{system.hull.max}}</strong></span>
+        <span class="sc-stat-badge sc-hull-badge">Hull <strong>{{data.hull.current}}/{{data.hull.max}}</strong></span>
         <span class="sc-stat-badge sc-shield-badge">Shields <strong>{{totalShields}}/{{maxShields}}</strong></span>
       </div>
     </div>
@@ -20,31 +20,32 @@
       <div class="sc-form-grid">
         <div class="sc-form-row">
           <label>Frame</label>
-          <select name="system.frame">{{#each frameOptions}}<option value="{{this.value}}" {{#if this.selected}}selected{{/if}}>{{this.label}}</option>{{/each}}</select>
+          <select data-field="frame">{{#each frameOptions}}<option value="{{this.value}}" {{#if this.selected}}selected{{/if}}>{{this.label}}</option>{{/each}}</select>
+          <button type="button" data-action="applyFrame" class="sc-btn sc-btn-sm" title="Apply frame stats (overwrites hull, speed, etc.)">Apply</button>
         </div>
         <div class="sc-form-row">
           <label>Size</label>
-          <select name="system.size">{{#each sizeOptions}}<option value="{{this.value}}" {{#if this.selected}}selected{{/if}}>{{this.label}}</option>{{/each}}</select>
+          <select data-field="size">{{#each sizeOptions}}<option value="{{this.value}}" {{#if this.selected}}selected{{/if}}>{{this.label}}</option>{{/each}}</select>
         </div>
         <div class="sc-form-row">
           <label>Maneuverability</label>
-          <select name="system.maneuverability">{{#each maneuverabilityOptions}}<option value="{{this.value}}" {{#if this.selected}}selected{{/if}}>{{this.label}}</option>{{/each}}</select>
+          <select data-field="maneuverability">{{#each maneuverabilityOptions}}<option value="{{this.value}}" {{#if this.selected}}selected{{/if}}>{{this.label}}</option>{{/each}}</select>
         </div>
         <div class="sc-form-row">
           <label>Tier</label>
-          <input type="number" name="system.tier" value="{{system.tier}}" />
+          <input type="number" data-field="tier" value="{{data.tier}}" />
         </div>
         <div class="sc-form-row">
           <label>Speed</label>
-          <input type="number" name="system.speed" value="{{system.speed}}" />
+          <input type="number" data-field="speed" value="{{data.speed}}" />
         </div>
         <div class="sc-form-row">
           <label>Turn Distance</label>
-          <input type="number" name="system.turnDistance" value="{{system.turnDistance}}" />
+          <input type="number" data-field="turnDistance" value="{{data.turnDistance}}" />
         </div>
         <div class="sc-form-row">
           <label>Disposition</label>
-          <select name="system.disposition">{{#each dispositionOptions}}<option value="{{this.value}}" {{#if this.selected}}selected{{/if}}>{{this.label}}</option>{{/each}}</select>
+          <select data-field="disposition">{{#each dispositionOptions}}<option value="{{this.value}}" {{#if this.selected}}selected{{/if}}>{{this.label}}</option>{{/each}}</select>
         </div>
       </div>
     </section>
@@ -55,47 +56,48 @@
       <div class="sc-form-grid">
         <div class="sc-form-row">
           <label>Hull HP</label>
-          <input type="number" name="system.hull.current" value="{{system.hull.current}}" style="width:60px" /> /
-          <input type="number" name="system.hull.max" value="{{system.hull.max}}" style="width:60px" />
+          <input type="number" data-field="hull.current" value="{{data.hull.current}}" style="width:60px" /> /
+          <input type="number" data-field="hull.max" value="{{data.hull.max}}" style="width:60px" />
         </div>
         <div class="sc-form-row">
           <label>DT / CT</label>
-          <input type="number" name="system.dt" value="{{system.dt}}" style="width:50px" /> /
-          <input type="number" name="system.ct" value="{{system.ct}}" style="width:50px" />
+          <input type="number" data-field="dt" value="{{data.dt}}" style="width:50px" /> /
+          <input type="number" data-field="ct" value="{{data.ct}}" style="width:50px" />
         </div>
         <div class="sc-form-row">
           <label>Armor Bonus (AC)</label>
-          <input type="number" name="system.armorBonus" value="{{system.armorBonus}}" />
+          <input type="number" data-field="armorBonus" value="{{data.armorBonus}}" />
         </div>
         <div class="sc-form-row">
           <label>Armor TL Penalty</label>
-          <input type="number" name="system.armorTlPenalty" value="{{system.armorTlPenalty}}" />
+          <input type="number" data-field="armorTlPenalty" value="{{data.armorTlPenalty}}" />
         </div>
         <div class="sc-form-row">
           <label>Countermeasures (TL)</label>
-          <input type="number" name="system.countermeasuresBonus" value="{{system.countermeasuresBonus}}" />
+          <input type="number" data-field="countermeasuresBonus" value="{{data.countermeasuresBonus}}" />
         </div>
         <div class="sc-form-row">
           <label>Pilot Ranks</label>
-          <input type="number" name="system.pilotRanks" value="{{system.pilotRanks}}" />
+          <input type="number" data-field="pilotRanks" value="{{data.pilotRanks}}" />
         </div>
         <div class="sc-form-row">
           <label>Computer Bonus</label>
-          <input type="number" name="system.computerBonus" value="{{system.computerBonus}}" />
+          <input type="number" data-field="computerBonus" value="{{data.computerBonus}}" />
         </div>
       </div>
     </section>
 
     {{!-- Shields --}}
     <section class="sc-sheet-section">
-      <h2>Shields (Total SP: {{system.shields.total}})</h2>
+      <h2>Shields (Total SP: {{data.shields.total}})</h2>
+      <input type="number" data-field="shields.total" value="{{data.shields.total}}" style="width:60px; margin-bottom:6px;" />
       <div class="sc-shields-grid">
         {{#each shieldQuadrants}}
           <div class="sc-shield-quadrant">
             <label>{{this.label}}</label>
             <div class="sc-bar sc-bar-shield"><div class="sc-bar-fill" style="width:{{this.percent}}%"></div></div>
-            <input type="number" name="system.shields.{{this.id}}.current" value="{{this.current}}" style="width:50px" /> /
-            <input type="number" name="system.shields.{{this.id}}.max" value="{{this.max}}" style="width:50px" />
+            <input type="number" data-field="shields.{{this.id}}.current" value="{{this.current}}" style="width:50px" /> /
+            <input type="number" data-field="shields.{{this.id}}.max" value="{{this.max}}" style="width:50px" />
           </div>
         {{/each}}
       </div>
@@ -122,17 +124,30 @@
         <div class="sc-weapon-entry">
           <strong>{{this.name}}</strong>
           <span class="sc-weapon-detail">{{this.type}} | {{this.mount}} | {{this.arc}} | {{this.damage}} | Range: {{this.range}}</span>
+          <button type="button" data-action="removeWeapon" data-weapon-index="{{this.index}}" class="sc-btn sc-btn-sm sc-btn-danger" title="Remove weapon">
+            <i class="fas fa-trash"></i>
+          </button>
         </div>
       {{/each}}
       {{#unless weapons.length}}
         <p class="sc-empty-note">No weapons installed.</p>
       {{/unless}}
+      <div class="sc-add-weapon-row">
+        <select data-weapon-catalog>
+          {{#each weaponCatalogOptions}}
+            <option value="{{this.value}}">{{this.label}}</option>
+          {{/each}}
+        </select>
+        <button type="button" data-action="addWeapon" class="sc-btn sc-btn-sm sc-btn-go">
+          <i class="fas fa-plus"></i> Add Weapon
+        </button>
+      </div>
     </section>
 
     {{!-- Notes --}}
     <section class="sc-sheet-section">
       <h2>Notes</h2>
-      <textarea name="system.notes" rows="4">{{system.notes}}</textarea>
+      <textarea data-field="notes" rows="4">{{data.notes}}</textarea>
     </section>
   </div>
 </div>

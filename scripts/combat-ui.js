@@ -7,6 +7,7 @@ import { ROLES, CRITICAL_SYSTEMS, CRIT_CONDITIONS, SHIELD_QUADRANTS, ARCS, WEAPO
 import { calcAC, calcTL, getTotalShields, getMaxShields } from "./combat-engine.js";
 import { CombatManager } from "./combat-manager.js";
 import { ACTIONS, getActionsForRole } from "./actions.js";
+import { isStarship, getShipData } from "./starship-actor.js";
 
 const MODULE_ID = "starship-combat-ftl";
 const { HandlebarsApplicationMixin, ApplicationV2 } = foundry.applications.api;
@@ -86,16 +87,19 @@ export class StarshipCombatUI extends HandlebarsApplicationMixin(ApplicationV2) 
     ctx.statusText = "Setup — Add ships and assign crew";
     ctx.canStart = mgr.ships.size >= 2;
 
-    // All starship actors
-    const allStarships = game.actors?.contents.filter(a => a.type === "starship") ?? [];
+    // All starship actors (identified by our module flag, not by type)
+    const allStarships = game.actors?.contents.filter(a => isStarship(a)) ?? [];
     const addedIds = new Set(mgr.ships.keys());
-    ctx.availableShips = allStarships.map(a => ({
-      id: a.id,
-      name: a.name,
-      img: a.img,
-      disposition: a.system?.disposition ?? "enemy",
-      added: addedIds.has(a.id)
-    }));
+    ctx.availableShips = allStarships.map(a => {
+      const shipData = getShipData(a);
+      return {
+        id: a.id,
+        name: a.name,
+        img: a.img,
+        disposition: shipData?.disposition ?? "enemy",
+        added: addedIds.has(a.id)
+      };
+    });
 
     ctx.addedShips = mgr.getAllShips().map(s => ({
       id: s.id, name: s.name, disposition: s.disposition

@@ -5,6 +5,7 @@
 
 import { ROLES, SHIELD_QUADRANTS, CRITICAL_SYSTEMS, MANEUVERABILITY } from "./constants.js";
 import { calcAC, calcTL, processTrackingProjectiles, distributeShieldsEvenly, getTotalShields, getMaxShields, getCritPenalties } from "./combat-engine.js";
+import { getShipData as getShipDataFromActor, buildDefaultShipData, isStarship, setShipData as setShipDataOnActor } from "./starship-actor.js";
 
 const MODULE_ID = "starship-combat-ftl";
 
@@ -101,48 +102,12 @@ export class CombatManager {
 
   /**
    * Extract ship data from an Actor.
-   * Reads from the actor's flags or system data.
+   * Reads from the actor's module flags.
    */
   #extractShipData(actor) {
-    // Check for our custom starship data in flags
-    const flagData = actor.getFlag(MODULE_ID, "shipData");
+    const flagData = getShipDataFromActor(actor);
     if (flagData) return foundry.utils.deepClone(flagData);
-
-    // Fallback: build default data from actor
-    return this.#buildDefaultShipData(actor);
-  }
-
-  /**
-   * Build default ship data when no flag data exists.
-   */
-  #buildDefaultShipData(actor) {
-    return {
-      name: actor.name,
-      tier: 1,
-      size: "medium",
-      maneuverability: "average",
-      speed: 8,
-      turnDistance: 2,
-      hull: { current: 55, max: 55 },
-      hpIncrement: 10,
-      dt: 0,
-      ct: 11,
-      armorBonus: 2,
-      armorTlPenalty: 0,
-      countermeasuresBonus: 1,
-      computerBonus: 1,
-      pilotRanks: 5,
-      shields: {
-        total: 40,
-        forward:   { current: 10, max: 10 },
-        port:      { current: 10, max: 10 },
-        starboard: { current: 10, max: 10 },
-        aft:       { current: 10, max: 10 }
-      },
-      weapons: [],
-      criticals: {},
-      modifiers: {}
-    };
+    return buildDefaultShipData(actor.name);
   }
 
   /**
