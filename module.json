@@ -2,7 +2,7 @@
   "id": "starship-combat-ftl",
   "title": "Starship Combat — FTL Edition",
   "description": "A complete FTL-inspired starship combat system for Starfinder 2e using SF1e ship stats. Multi-ship combat, 5 crew roles, tracking weapons, subsystem targeting, and tactical depth.",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "authors": [
     {
       "name": "Custom Module"

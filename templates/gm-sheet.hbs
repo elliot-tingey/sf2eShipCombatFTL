@@ -1,0 +1,141 @@
+<div class="sc-gm-sheet">
+  <header class="sc-header">
+    <img class="sc-portrait" src="{{img}}" data-action="pickImage" title="Click to change image" />
+    <div class="sc-header-info">
+      <h1>{{name}}</h1>
+      <div class="sc-derived-row">
+        <span class="sc-derived" title="Armor Class">AC <strong>{{ac}}</strong></span>
+        <span class="sc-derived" title="Target Lock">TL <strong>{{tl}}</strong></span>
+        <span class="sc-derived sc-hull-color">Hull <strong>{{data.hull.current}}/{{data.hull.max}}</strong></span>
+        <span class="sc-derived sc-shield-color">Shields <strong>{{data.shields.current}}/{{data.shields.max}}</strong></span>
+      </div>
+    </div>
+  </header>
+
+  <nav class="sheet-tabs sc-tabs" data-group="primary">
+    <a class="item active" data-tab="stats" data-group="primary">Stats</a>
+    <a class="item" data-tab="subsystems" data-group="primary">Subsystems</a>
+    <a class="item" data-tab="weapons" data-group="primary">Weapons</a>
+    <a class="item" data-tab="crew" data-group="primary">Crew</a>
+  </nav>
+
+  <div class="sc-gm-body">
+
+    {{!-- STATS TAB --}}
+    <div class="tab active" data-tab="stats" data-group="primary">
+      <fieldset>
+        <legend>Frame & Identity</legend>
+        <div class="sc-form-grid">
+          <div class="sc-field"><label>Frame</label>
+            <div class="sc-field-row"><select data-field="frame">{{#each frameOptions}}<option value="{{this.value}}" {{#if this.selected}}selected{{/if}}>{{this.label}}</option>{{/each}}</select>
+            <button type="button" data-action="applyFrame" class="sc-btn-inline" title="Apply frame template">Apply</button></div>
+          </div>
+          <div class="sc-field"><label>Size</label><select data-field="size">{{#each sizeOptions}}<option value="{{this.value}}" {{#if this.selected}}selected{{/if}}>{{this.label}}</option>{{/each}}</select></div>
+          <div class="sc-field"><label>Maneuverability</label><select data-field="maneuverability">{{#each manOptions}}<option value="{{this.value}}" {{#if this.selected}}selected{{/if}}>{{this.label}}</option>{{/each}}</select></div>
+          <div class="sc-field"><label>Disposition</label><select data-field="disposition">{{#each dispOptions}}<option value="{{this.value}}" {{#if this.selected}}selected{{/if}}>{{this.label}}</option>{{/each}}</select></div>
+          <div class="sc-field"><label>Tier</label><input type="number" data-field="tier" value="{{data.tier}}" /></div>
+          <div class="sc-field"><label>Speed</label><input type="number" data-field="speed" value="{{data.speed}}" /></div>
+          <div class="sc-field"><label>Turn Dist.</label><input type="number" data-field="turnDistance" value="{{data.turnDistance}}" /></div>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Hull & Defenses</legend>
+        <div class="sc-form-grid">
+          <div class="sc-field"><label>Hull HP</label><div class="sc-field-row"><input type="number" data-field="hull.current" value="{{data.hull.current}}" class="sc-w50" /> / <input type="number" data-field="hull.max" value="{{data.hull.max}}" class="sc-w50" /></div></div>
+          <div class="sc-field"><label>Shields</label><div class="sc-field-row"><input type="number" data-field="shields.current" value="{{data.shields.current}}" class="sc-w50" /> / <input type="number" data-field="shields.max" value="{{data.shields.max}}" class="sc-w50" /></div></div>
+          <div class="sc-field"><label>DT</label><input type="number" data-field="dt" value="{{data.dt}}" /></div>
+          <div class="sc-field"><label>CT</label><input type="number" data-field="ct" value="{{data.ct}}" /></div>
+          <div class="sc-field"><label>Armor (AC)</label><input type="number" data-field="armorBonus" value="{{data.armorBonus}}" /></div>
+          <div class="sc-field"><label>Armor TL Pen.</label><input type="number" data-field="armorTlPenalty" value="{{data.armorTlPenalty}}" /></div>
+          <div class="sc-field"><label>Countermeasures</label><input type="number" data-field="countermeasuresBonus" value="{{data.countermeasuresBonus}}" /></div>
+          <div class="sc-field"><label>Pilot Ranks</label><input type="number" data-field="pilotRanks" value="{{data.pilotRanks}}" /></div>
+          <div class="sc-field"><label>Computer Bonus</label><input type="number" data-field="computerBonus" value="{{data.computerBonus}}" /></div>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Notes</legend>
+        <textarea data-field="notes" rows="3">{{data.notes}}</textarea>
+      </fieldset>
+    </div>
+
+    {{!-- SUBSYSTEMS TAB --}}
+    <div class="tab" data-tab="subsystems" data-group="primary">
+      <div class="sc-subsystem-list">
+        {{#each subsystems}}
+          <div class="sc-subsystem-row sc-sev-{{this.severity}}">
+            <i class="fas {{this.icon}}"></i>
+            <span class="sc-sub-name">{{this.name}}</span>
+            <span class="sc-sub-type">({{this.typeLabel}})</span>
+            <select data-action="setCondition" data-subsystem-id="{{this.id}}">
+              {{#each this.conditionOptions}}<option value="{{this.value}}" {{#if this.selected}}selected{{/if}}>{{this.label}}</option>{{/each}}
+            </select>
+            <button type="button" data-action="removeSubsystem" data-subsystem-id="{{this.id}}" class="sc-btn-icon sc-danger" title="Remove"><i class="fas fa-trash"></i></button>
+          </div>
+        {{/each}}
+      </div>
+      <div class="sc-add-row">
+        <select data-subsystem-type-select>{{#each subsystemTypeOptions}}<option value="{{this.value}}">{{this.label}}</option>{{/each}}</select>
+        <input type="text" data-subsystem-name-input placeholder="Custom name (optional)" />
+        <button type="button" data-action="addSubsystem" class="sc-btn-inline sc-go"><i class="fas fa-plus"></i> Add</button>
+      </div>
+    </div>
+
+    {{!-- WEAPONS TAB --}}
+    <div class="tab" data-tab="weapons" data-group="primary">
+      <div class="sc-weapon-list">
+        {{#each weapons}}
+          <div class="sc-weapon-row">
+            <strong>{{this.name}}</strong>
+            <span class="sc-wep-stat">{{this.damage}}</span>
+            <span class="sc-wep-stat">{{this.type}}</span>
+            <span class="sc-wep-stat">{{this.mount}}</span>
+            <span class="sc-wep-stat">{{this.arcLabel}}</span>
+            <span class="sc-wep-stat">Rng: {{this.range}}</span>
+            <button type="button" data-action="removeWeapon" data-weapon-id="{{this.id}}" class="sc-btn-icon sc-danger" title="Remove"><i class="fas fa-trash"></i></button>
+          </div>
+        {{/each}}
+        {{#unless weapons.length}}<p class="sc-empty">No weapons installed.</p>{{/unless}}
+      </div>
+      <div class="sc-add-row">
+        <select data-weapon-catalog-select>{{#each weaponCatalogOptions}}<option value="{{this.value}}">{{this.label}}</option>{{/each}}</select>
+        <button type="button" data-action="addWeapon" class="sc-btn-inline sc-go"><i class="fas fa-plus"></i> Add</button>
+      </div>
+    </div>
+
+    {{!-- CREW TAB --}}
+    <div class="tab" data-tab="crew" data-group="primary">
+      <p class="sc-hint">Assign PCs/NPCs to roles. Multiple crew can fill the same role. Assignments are remembered.</p>
+
+      {{#each roleAssignments}}
+        <fieldset class="sc-crew-role-block">
+          <legend><i class="fas {{this.icon}}"></i> {{this.label}}</legend>
+          <div class="sc-crew-selects">
+            <select data-crew-role="{{this.id}}">
+              {{#each this.crewOptions}}
+                <option value="{{this.id}}" {{#if this.selected}}selected{{/if}}>{{this.name}}</option>
+              {{/each}}
+            </select>
+            <select data-crew-role="{{this.id}}">
+              {{#each this.crewOptions}}
+                <option value="{{this.id}}">{{this.name}}</option>
+              {{/each}}
+            </select>
+          </div>
+        </fieldset>
+      {{/each}}
+
+      <fieldset>
+        <legend><i class="fas fa-microchip"></i> Ship Computer (NPC)</legend>
+        <select data-computer-npc>
+          {{#each computerNpcOptions}}
+            <option value="{{this.id}}" {{#if this.selected}}selected{{/if}}>{{this.name}}</option>
+          {{/each}}
+        </select>
+      </fieldset>
+
+      <button type="button" data-action="saveCrew" class="sc-btn-full"><i class="fas fa-save"></i> Save Crew Assignments</button>
+    </div>
+  </div>
+</div>

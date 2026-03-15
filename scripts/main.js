@@ -1,28 +1,18 @@
 /* ==========================================================================
-   STARSHIP COMBAT — FTL EDITION v2
-   Main: Module init, hooks, scene controls
+   STARSHIP COMBAT — FTL EDITION v3
+   Main: Init, hooks, sheet routing, scene controls
    ========================================================================== */
 
-import { registerStarshipSystem, showCreateStarshipDialog, isStarship, openStarshipSheet, createStarshipActor } from "./starship-actor.js";
-import { StarshipCombatUI } from "./combat-ui.js";
-import { CombatManager } from "./combat-manager.js";
-
-const MODULE_ID = "starship-combat-ftl";
-
-let _combatUI = null;
-function getCombatUI() {
-  if (!_combatUI) _combatUI = new StarshipCombatUI();
-  return _combatUI;
-}
+import { MODULE_ID } from "./constants.js";
+import { isStarship, showCreateStarshipDialog, createStarshipActor, getShipData } from "./ship-data.js";
+import { openGMSheet } from "./gm-sheet.js";
+import { openPlayerSheet } from "./player-sheet.js";
 
 // ── Init ────────────────────────────────────────────────────────────────────
 Hooks.once("init", () => {
-  console.log(`${MODULE_ID} | Initializing Starship Combat — FTL Edition v2`);
-
-  // Settings
+  console.log(`${MODULE_ID} | Initializing Starship Combat — FTL Edition v3`);
   game.settings.register(MODULE_ID, "enableChatCards", {
-    name: "Enable Chat Cards",
-    hint: "Post combat actions to the chat log.",
+    name: "Enable Chat Cards", hint: "Post combat actions to the chat log.",
     scope: "world", config: true, type: Boolean, default: true
   });
 });
@@ -31,46 +21,86 @@ Hooks.once("init", () => {
 Hooks.once("ready", () => {
   console.log(`${MODULE_ID} | Module ready`);
 
-  // Register the flag-based starship system (hooks, buttons, sheet redirect)
-  registerStarshipSystem();
+  // Register sheet routing and directory button
+  registerStarshipHooks();
 
   // Global API
   game.modules.get(MODULE_ID).api = {
-    openCombatUI: () => getCombatUI().render({ force: true }),
-    getCombatUI,
-    getCombatManager: () => CombatManager.get(),
     createStarship: createStarshipActor,
     showCreateDialog: showCreateStarshipDialog,
     isStarship,
-    openSheet: openStarshipSheet
+    openGMSheet,
+    openPlayerSheet
   };
 
   globalThis.StarshipCombat = {
-    open: () => getCombatUI().render({ force: true }),
-    close: () => { if (_combatUI) _combatUI.close(); },
-    manager: () => CombatManager.get(),
     createShip: (name, frame) => createStarshipActor(name, frame),
-    createDialog: () => showCreateStarshipDialog()
+    createDialog: () => showCreateStarshipDialog(),
+    openGM: (actor) => openGMSheet(actor),
+    openPlayer: (actor) => openPlayerSheet(actor)
   };
 
   if (game.user.isGM) {
-    console.log(`${MODULE_ID} | ✓ Ready. Use the 🚀 button in token controls or run StarshipCombat.open()`);
-    console.log(`${MODULE_ID} | ✓ Create ships via "Create Starship" button in Actor Directory`);
-    console.log(`${MODULE_ID} | ✓ Or run StarshipCombat.createDialog() / StarshipCombat.createShip("My Ship")`);
+    console.log(`${MODULE_ID} | ✓ Use "Create Starship" button in Actor Directory`);
+    console.log(`${MODULE_ID} | ✓ Or: StarshipCombat.createDialog()`);
   }
 });
 
-// ── Scene Controls ──────────────────────────────────────────────────────────
-Hooks.on("getSceneControlButtons", (controls) => {
-  const tokenControls = controls.find(c => c.name === "token");
-  if (tokenControls) {
-    tokenControls.tools.push({
-      name: "starship-combat",
-      title: "Starship Combat",
-      icon: "fas fa-rocket",
-      button: true,
-      onClick: () => getCombatUI().render({ force: true }),
-      visible: game.user.isGM
+
+// ── Hook Registration ───────────────────────────────────────────────────────
+
+function registerStarshipHooks() {
+
+  // Intercept actor sheet open → route to GM or player sheet
+  Hooks.on("renderActorSheet", (sheet, html, data) => {
+    const actor = sheet.document ?? sheet.actor;
+    if (!actor || !isStarship(actor)) return;
+
+    // Close the system's default sheet
+    setTimeout(() => {
+      sheet.close();
+      // Route: GM gets config sheet, players get action sheet
+      if (game.user.isGM) {
+        openGMSheet(actor);
+      } else {
+        openPlayerSheet(actor);
+      }
+    }, 50);
+  });
+
+  // Add "Create Starship" button to Actor directory
+  Hooks.on("renderActorDirectory", (app, html) => {
+    const root = html instanceof HTMLElement ? html : html[0];
+    if (!root) return;
+
+    const headerActions = root.querySelector(".header-actions");
+    if (!headerActions || headerActions.querySelector(".sc-create-btn")) return;
+
+    const btn = document.createElement("button");
+    btn.className = "sc-create-btn";
+    btn.type = "button";
+    btn.innerHTML = `<i class="fas fa-rocket"></i> Create Starship`;
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      showCreateStarshipDialog();
     });
-  }
-});
+    headerActions.appendChild(btn);
+
+    // Mark starship actors with rocket icon
+    root.querySelectorAll(".directory-item.document, .directory-item[data-document-id], .directory-item[data-entry-id]").forEach(el => {
+      const id = el.dataset?.documentId ?? el.dataset?.entryId;
+      if (!id) return;
+      const actor = game.actors.get(id);
+      if (actor && isStarship(actor)) {
+        const nameEl = el.querySelector(".document-name, .entry-name");
+        if (nameEl && !nameEl.querySelector(".fa-rocket")) {
+          const icon = document.createElement("i");
+          icon.className = "fas fa-rocket";
+          icon.style.cssText = "margin-right: 4px; opacity: 0.7; color: var(--color-text-hyperlink, #4f8eff);";
+          nameEl.prepend(icon);
+        }
+      }
+    });
+  });
+}

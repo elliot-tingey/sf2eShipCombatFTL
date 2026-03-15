@@ -1,7 +1,7 @@
 {
   "STARSHIP_COMBAT": {
     "title": "Starship Combat — FTL Edition",
-    "actorType": "Starship",
+    "createStarship": "Create Starship",
     "roles": {
       "pilot": "Pilot",
       "gunner": "Gunner",
@@ -9,33 +9,24 @@
       "arcnet": "ArcNet Officer",
       "engineer": "Engineer"
     },
-    "dispositions": {
-      "friendly": "Friendly",
-      "enemy": "Enemy",
-      "neutral": "Neutral"
+    "subsystems": {
+      "lifeSupport": "Life Support",
+      "sensors": "Sensors",
+      "weaponsArray": "Weapons Array",
+      "engines": "Engines",
+      "powerCore": "Power Core",
+      "misc": "Misc"
     },
-    "quadrants": {
-      "forward": "Forward",
-      "port": "Port",
-      "starboard": "Starboard",
-      "aft": "Aft"
-    },
-    "critConditions": {
+    "conditions": {
       "nominal": "Nominal",
       "glitching": "Glitching",
       "malfunctioning": "Malfunctioning",
       "wrecked": "Wrecked"
     },
-    "weaponTypes": {
-      "directFire": "Direct-Fire",
-      "tracking": "Tracking",
-      "ecm": "ECM",
-      "melee": "Melee"
-    },
-    "trackingSpeeds": {
-      "fast": "Fast (1 turn)",
-      "medium": "Medium (2 turns)",
-      "slow": "Slow (3 turns)"
+    "dispositions": {
+      "friendly": "Friendly",
+      "enemy": "Enemy",
+      "neutral": "Neutral"
     }
   }
 }
