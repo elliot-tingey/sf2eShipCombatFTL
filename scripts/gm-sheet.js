@@ -1,6 +1,6 @@
 /* ==========================================================================
    STARSHIP COMBAT — FTL EDITION v3
-   GM Sheet: Full editing interface for starship configuration
+   GM Sheet: Stats, subsystems, weapons, crew (+/- slots), inventory
    ========================================================================== */
 
 import { MODULE_ID, SUBSYSTEM_TYPES, DAMAGE_CONDITIONS, ROLES, SIZE_CATEGORIES, MANEUVERABILITY, BASE_FRAMES, WEAPON_CATALOG, ARCS } from "./constants.js";
@@ -11,10 +11,16 @@ const { HandlebarsApplicationMixin, ApplicationV2 } = foundry.applications.api;
 export class GMStarshipSheet extends HandlebarsApplicationMixin(ApplicationV2) {
 
   actor = null;
+  /** Track how many crew slots per role in the UI */
+  crewSlotCounts = {};
 
   constructor(actor, options = {}) {
     super(options);
     this.actor = actor;
+    // Initialize slot counts from crew memory
+    for (const roleId of Object.keys(ROLES)) {
+      this.crewSlotCounts[roleId] = 1;
+    }
   }
 
   static DEFAULT_OPTIONS = {
@@ -29,14 +35,17 @@ export class GMStarshipSheet extends HandlebarsApplicationMixin(ApplicationV2) {
       setCondition: GMStarshipSheet.#onSetCondition,
       addWeapon: GMStarshipSheet.#onAddWeapon,
       removeWeapon: GMStarshipSheet.#onRemoveWeapon,
-      saveCrew: GMStarshipSheet.#onSaveCrew
+      addCrewSlot: GMStarshipSheet.#onAddCrewSlot,
+      removeCrewSlot: GMStarshipSheet.#onRemoveCrewSlot,
+      saveCrew: GMStarshipSheet.#onSaveCrew,
+      removeInventoryItem: GMStarshipSheet.#onRemoveInventoryItem
     }
   };
 
   static PARTS = {
     sheet: {
       template: `modules/${MODULE_ID}/templates/gm-sheet.hbs`,
-      scrollable: [".sc-gm-body"]
+      scrollable: [".sc-body"]
     }
   };
 
@@ -49,38 +58,55 @@ export class GMStarshipSheet extends HandlebarsApplicationMixin(ApplicationV2) {
     if (!data) return {};
     const derived = getDerived(data);
 
-    // Build crew options: "- GM -" at top, then PCs, then NPCs
+    // Crew options: GM first, then PCs, then NPCs
     const pcActors = game.actors?.contents.filter(a => a.hasPlayerOwner && a.type === "character") ?? [];
     const npcActors = game.actors?.contents.filter(a => !a.hasPlayerOwner && (a.type === "npc" || a.type === "character")) ?? [];
-
     const crewOptions = [
-      { id: "", name: "— GM —", group: "default" },
-      ...pcActors.map(a => ({ id: a.id, name: a.name, group: "pc" })),
-      ...npcActors.map(a => ({ id: a.id, name: `${a.name} (NPC)`, group: "npc" }))
+      { id: "", name: "— GM —" },
+      ...pcActors.map(a => ({ id: a.id, name: a.name })),
+      ...npcActors.map(a => ({ id: a.id, name: `${a.name} (NPC)` }))
     ];
 
-    // Build role assignments from memory
-    const roleAssignments = {};
+    // Build role assignments with dynamic slot counts
+    const roleAssignments = [];
     for (const [roleId, roleDef] of Object.entries(ROLES)) {
       const memory = getCrewMemory(data, roleId);
-      roleAssignments[roleId] = {
-        id: roleId,
-        label: roleDef.label,
-        icon: roleDef.icon,
-        assigned: memory, // array of actor IDs
-        crewOptions: crewOptions.map(o => ({
-          ...o,
-          selected: memory.includes(o.id)
-        }))
-      };
+      // Ensure slot count is at least as many as saved crew
+      if (memory.length > this.crewSlotCounts[roleId]) {
+        this.crewSlotCounts[roleId] = memory.length;
+      }
+      const slotCount = Math.max(1, this.crewSlotCounts[roleId]);
+      const slots = [];
+      for (let i = 0; i < slotCount; i++) {
+        const assignedId = memory[i] ?? "";
+        slots.push({
+          index: i,
+          options: crewOptions.map(o => ({ ...o, selected: o.id === assignedId }))
+        });
+      }
+      roleAssignments.push({
+        id: roleId, label: roleDef.label, icon: roleDef.icon,
+        slots, slotCount,
+        canRemoveSlot: slotCount > 1,
+        needsScroll: slotCount > 3
+      });
     }
+
+    // Embedded items (inventory) — the actor's native items
+    const inventory = actor.items?.contents.map(item => ({
+      id: item.id,
+      name: item.name,
+      img: item.img,
+      type: item.type,
+      quantity: item.system?.quantity ?? 1,
+      bulk: item.system?.bulk?.value ?? "—",
+      value: item.system?.price?.value?.gp ?? item.system?.price?.value ?? "—"
+    })) ?? [];
 
     return {
       actor, data, derived,
-      name: actor.name,
-      img: actor.img,
-      ac: derived.ac,
-      tl: derived.tl,
+      name: actor.name, img: actor.img,
+      ac: derived.ac, tl: derived.tl,
 
       sizeOptions: Object.entries(SIZE_CATEGORIES).map(([k, v]) => ({ value: k, label: v.label, selected: data.size === k })),
       manOptions: Object.entries(MANEUVERABILITY).map(([k, v]) => ({ value: k, label: v.label, selected: data.maneuverability === k })),
@@ -104,8 +130,7 @@ export class GMStarshipSheet extends HandlebarsApplicationMixin(ApplicationV2) {
 
       weapons: (data.weapons ?? []).map(w => ({
         ...w,
-        arcLabel: ARCS[w.arc]?.label ?? w.arc,
-        arcOptions: Object.entries(ARCS).map(([k, v]) => ({ value: k, label: v.label, selected: w.arc === k }))
+        arcLabel: ARCS[w.arc]?.label ?? w.arc
       })),
 
       weaponCatalogOptions: Object.entries(WEAPON_CATALOG).map(([k, v]) => ({
@@ -113,18 +138,21 @@ export class GMStarshipSheet extends HandlebarsApplicationMixin(ApplicationV2) {
         label: `${v.name} (${v.mount} ${v.type === "tracking" ? "tracking" : "direct"}, ${v.damage})`
       })),
 
-      roleAssignments: Object.values(roleAssignments),
+      roleAssignments,
       crewOptions,
 
       computerNpcId: data.computerNpcId ?? "",
       computerNpcOptions: [
         { id: "", name: "— None —" },
         ...npcActors.map(a => ({ id: a.id, name: a.name, selected: data.computerNpcId === a.id }))
-      ]
+      ],
+
+      inventory,
+      hasInventory: inventory.length > 0
     };
   }
 
-  // ── Save all data-field inputs ──────────────────────────────────────────
+  // ── Save fields ─────────────────────────────────────────────────────────
   async #saveFields() {
     if (!this.actor) return;
     const data = getShipData(this.actor);
@@ -132,11 +160,7 @@ export class GMStarshipSheet extends HandlebarsApplicationMixin(ApplicationV2) {
 
     this.element.querySelectorAll("[data-field]").forEach(el => {
       const field = el.dataset.field;
-      let value;
-      if (el.type === "number") value = parseFloat(el.value) || 0;
-      else if (el.type === "checkbox") value = el.checked;
-      else value = el.value;
-
+      let value = el.type === "number" ? (parseFloat(el.value) || 0) : el.value;
       const parts = field.split(".");
       let obj = data;
       for (let i = 0; i < parts.length - 1; i++) {
@@ -151,132 +175,153 @@ export class GMStarshipSheet extends HandlebarsApplicationMixin(ApplicationV2) {
 
   // ── Actions ─────────────────────────────────────────────────────────────
 
-  static async #onPickImage(event, target) {
-    const fp = new FilePicker({
+  static async #onPickImage() {
+    new FilePicker({
       type: "image",
       current: this.actor.img,
       callback: async (path) => {
         await this.actor.update({ img: path });
         this.render({ force: true });
       }
-    });
-    fp.render(true);
+    }).render(true);
   }
 
-  static async #onApplyFrame(event, target) {
+  static async #onApplyFrame() {
     await this.#saveFields();
-    const select = this.element.querySelector("[data-field='frame']");
-    if (select?.value) {
-      await applyFrameToActor(this.actor, select.value);
-      this.render({ force: true });
-    }
+    const sel = this.element.querySelector("[data-field='frame']");
+    if (sel?.value) { await applyFrameToActor(this.actor, sel.value); this.render({ force: true }); }
   }
 
-  static async #onAddSubsystem(event, target) {
-    const select = this.element.querySelector("[data-subsystem-type-select]");
-    const nameInput = this.element.querySelector("[data-subsystem-name-input]");
-    const type = select?.value ?? "misc";
-    const name = nameInput?.value || "";
-
+  static async #onAddSubsystem() {
+    const sel = this.element.querySelector("[data-subsystem-type-select]");
+    const inp = this.element.querySelector("[data-subsystem-name-input]");
     const data = getShipData(this.actor);
     if (!data) return;
-    addSubsystem(data, type, name);
+    addSubsystem(data, sel?.value ?? "misc", inp?.value || "");
     await setShipData(this.actor, data);
     this.render({ force: true });
   }
 
   static async #onRemoveSubsystem(event, target) {
-    const id = target.dataset.subsystemId;
     const data = getShipData(this.actor);
     if (!data) return;
-    removeSubsystem(data, id);
+    removeSubsystem(data, target.dataset.subsystemId);
     await setShipData(this.actor, data);
     this.render({ force: true });
   }
 
   static async #onSetCondition(event, target) {
-    const id = target.dataset.subsystemId;
-    const condition = target.value;
     const data = getShipData(this.actor);
     if (!data) return;
-    const sub = data.subsystems.find(s => s.id === id);
-    if (sub) sub.condition = condition;
+    const sub = data.subsystems.find(s => s.id === target.dataset.subsystemId);
+    if (sub) sub.condition = target.value;
     await setShipData(this.actor, data);
     this.render({ force: true });
   }
 
-  static async #onAddWeapon(event, target) {
-    const select = this.element.querySelector("[data-weapon-catalog-select]");
-    const weaponKey = select?.value;
-    if (!weaponKey || !WEAPON_CATALOG[weaponKey]) return;
-
+  static async #onAddWeapon() {
+    const sel = this.element.querySelector("[data-weapon-catalog-select]");
+    const key = sel?.value;
+    if (!key || !WEAPON_CATALOG[key]) return;
     const data = getShipData(this.actor);
     if (!data) return;
-    addWeapon(data, WEAPON_CATALOG[weaponKey]);
+    addWeapon(data, WEAPON_CATALOG[key]);
     await setShipData(this.actor, data);
     this.render({ force: true });
   }
 
   static async #onRemoveWeapon(event, target) {
-    const id = target.dataset.weaponId;
     const data = getShipData(this.actor);
     if (!data) return;
-    removeWeapon(data, id);
+    removeWeapon(data, target.dataset.weaponId);
     await setShipData(this.actor, data);
     this.render({ force: true });
   }
 
-  static async #onSaveCrew(event, target) {
+  static #onAddCrewSlot(event, target) {
+    const role = target.dataset.role;
+    this.crewSlotCounts[role] = (this.crewSlotCounts[role] ?? 1) + 1;
+    this.render({ force: true });
+  }
+
+  static #onRemoveCrewSlot(event, target) {
+    const role = target.dataset.role;
+    this.crewSlotCounts[role] = Math.max(1, (this.crewSlotCounts[role] ?? 1) - 1);
+    this.render({ force: true });
+  }
+
+  static async #onSaveCrew() {
     const data = getShipData(this.actor);
     if (!data) return;
-
-    // Read crew selects for each role
     for (const roleId of Object.keys(ROLES)) {
       const selects = this.element.querySelectorAll(`[data-crew-role="${roleId}"]`);
       const ids = [];
       selects.forEach(sel => { if (sel.value) ids.push(sel.value); });
       saveCrewMemory(data, roleId, ids);
     }
-
-    // Computer NPC
-    const compSelect = this.element.querySelector("[data-computer-npc]");
-    if (compSelect) data.computerNpcId = compSelect.value || null;
-
+    const compSel = this.element.querySelector("[data-computer-npc]");
+    if (compSel) data.computerNpcId = compSel.value || null;
     await setShipData(this.actor, data);
     ui.notifications.info("Crew assignments saved.");
   }
 
-  _onRender(context, options) {
-    // Initialize tabs
-    const nav = this.element.querySelector("nav.sc-tabs");
-    const tabs = this.element.querySelectorAll(".tab[data-tab]");
-    if (nav) {
-      nav.querySelectorAll(".item").forEach(item => {
-        item.addEventListener("click", (e) => {
-          const tabName = item.dataset.tab;
-          nav.querySelectorAll(".item").forEach(i => i.classList.remove("active"));
-          item.classList.add("active");
-          tabs.forEach(t => {
-            t.classList.toggle("active", t.dataset.tab === tabName);
-          });
-        });
-      });
+  static async #onRemoveInventoryItem(event, target) {
+    const itemId = target.dataset.itemId;
+    const item = this.actor.items.get(itemId);
+    if (item) {
+      await item.delete();
+      this.render({ force: true });
     }
+  }
 
-    // Auto-save on field change
+  // ── Render ──────────────────────────────────────────────────────────────
+
+  _onRender(context, options) {
+    // Tab switching
+    const tabBtns = this.element.querySelectorAll(".sc-tab[data-sc-tab]");
+    const panes = this.element.querySelectorAll(".tab-pane[data-sc-pane]");
+    tabBtns.forEach(btn => {
+      btn.addEventListener("click", () => {
+        tabBtns.forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        panes.forEach(p => p.classList.toggle("active", p.dataset.scPane === btn.dataset.scTab));
+      });
+    });
+
+    // Auto-save fields
     this.element.querySelectorAll("[data-field]").forEach(el => {
       el.addEventListener("change", () => this.#saveFields());
     });
-    // Wire condition selects
+
+    // Condition selects
     this.element.querySelectorAll("[data-action='setCondition']").forEach(sel => {
       sel.addEventListener("change", (e) => GMStarshipSheet.#onSetCondition.call(this, e, sel));
     });
+
+    // Drag-drop items onto inventory tab
+    const dropZone = this.element.querySelector("[data-drop-zone='inventory']");
+    if (dropZone) {
+      dropZone.addEventListener("dragover", (e) => { e.preventDefault(); dropZone.classList.add("sc-drag-over"); });
+      dropZone.addEventListener("dragleave", () => dropZone.classList.remove("sc-drag-over"));
+      dropZone.addEventListener("drop", async (e) => {
+        e.preventDefault();
+        dropZone.classList.remove("sc-drag-over");
+        let dropData;
+        try { dropData = JSON.parse(e.dataTransfer.getData("text/plain")); } catch { return; }
+        if (dropData.type === "Item") {
+          const item = await fromUuid(dropData.uuid);
+          if (item) {
+            await this.actor.createEmbeddedDocuments("Item", [item.toObject()]);
+            this.render({ force: true });
+          }
+        }
+      });
+    }
   }
 }
 
-// ── Open Sheets Map ─────────────────────────────────────────────────────────
+// ── Sheet Map ───────────────────────────────────────────────────────────────
 const _gmSheets = new Map();
-
 export function openGMSheet(actor) {
   let sheet = _gmSheets.get(actor.id);
   if (sheet && !sheet._destroyed) { sheet.render({ force: true }); return sheet; }

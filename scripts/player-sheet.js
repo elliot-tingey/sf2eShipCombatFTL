@@ -27,7 +27,7 @@ export class PlayerStarshipSheet extends HandlebarsApplicationMixin(ApplicationV
   static PARTS = {
     sheet: {
       template: `modules/${MODULE_ID}/templates/player-sheet.hbs`,
-      scrollable: [".sc-player-body"]
+      scrollable: [".sc-body"]
     }
   };
 
@@ -79,25 +79,33 @@ export class PlayerStarshipSheet extends HandlebarsApplicationMixin(ApplicationV
       })),
 
       // Ship notes
-      notes: data.notes ?? ""
+      notes: data.notes ?? "",
+
+      // Inventory (read-only for players)
+      inventory: actor.items?.contents.map(item => ({
+        id: item.id,
+        name: item.name,
+        img: item.img,
+        type: item.type,
+        quantity: item.system?.quantity ?? 1,
+        bulk: item.system?.bulk?.value ?? "—",
+        value: item.system?.price?.value?.gp ?? item.system?.price?.value ?? "—"
+      })) ?? [],
+      hasInventory: (actor.items?.size ?? 0) > 0
     };
   }
 
   _onRender(context, options) {
-    const nav = this.element.querySelector("nav.sc-tabs");
-    const tabs = this.element.querySelectorAll(".tab[data-tab]");
-    if (nav) {
-      nav.querySelectorAll(".item").forEach(item => {
-        item.addEventListener("click", (e) => {
-          const tabName = item.dataset.tab;
-          nav.querySelectorAll(".item").forEach(i => i.classList.remove("active"));
-          item.classList.add("active");
-          tabs.forEach(t => {
-            t.classList.toggle("active", t.dataset.tab === tabName);
-          });
-        });
+    const tabBtns = this.element.querySelectorAll(".sc-tab[data-sc-tab]");
+    const panes = this.element.querySelectorAll(".tab-pane[data-sc-pane]");
+    tabBtns.forEach(btn => {
+      btn.addEventListener("click", () => {
+        const target = btn.dataset.scTab;
+        tabBtns.forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        panes.forEach(p => p.classList.toggle("active", p.dataset.scPane === target));
       });
-    }
+    });
   }
 }
 

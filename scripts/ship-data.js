@@ -3,7 +3,7 @@
    Ship Data: Flag-based storage, defaults, derived stats, crew persistence
    ========================================================================== */
 
-import { MODULE_ID, FLAG_KEY, IS_SHIP_FLAG, SIZE_CATEGORIES, MANEUVERABILITY, SUBSYSTEM_TYPES, DAMAGE_CONDITIONS, BASE_FRAMES, ROLES } from "./constants.js";
+import { MODULE_ID, FLAG_KEY, IS_SHIP_FLAG, SIZE_CATEGORIES, MANEUVERABILITY, SUBSYSTEM_TYPES, DAMAGE_CONDITIONS, BASE_FRAMES, ROLES, WEAPON_CATALOG } from "./constants.js";
 
 // ── Flag Access ─────────────────────────────────────────────────────────────
 
@@ -351,4 +351,83 @@ export async function showCreateStarshipDialog() {
       default: "create"
     }).render(true);
   });
+}
+
+
+// ── Weapon Compendium ───────────────────────────────────────────────────────
+
+/**
+ * Create and populate a world compendium of starship weapons if it doesn't exist.
+ * Uses sf2e-compatible Item format with weapon data stored in flags.
+ */
+export async function ensureWeaponCompendium() {
+  if (!game.user.isGM) return null;
+
+  const packName = `${MODULE_ID}-weapons`;
+  const packId = `world.${packName}`;
+  let pack = game.packs.get(packId);
+
+  // If pack exists and has items, we're done
+  if (pack && pack.index.size > 0) return pack;
+
+  // Create the compendium if it doesn't exist
+  if (!pack) {
+    try {
+      pack = await CompendiumCollection.createCompendium({
+        label: "Starship Weapons (FTL)",
+        type: "Item",
+        ownership: { PLAYER: "OBSERVER", ASSISTANT: "OWNER" }
+      });
+      console.log(`${MODULE_ID} | Created weapon compendium`);
+    } catch (e) {
+      console.warn(`${MODULE_ID} | Could not create weapon compendium:`, e);
+      return null;
+    }
+  }
+
+  if (!pack) return null;
+
+  // Group weapons by mount size for folder organization
+  const folders = {};
+  const mountLabels = { light: "Light Weapons", heavy: "Heavy Weapons", capital: "Capital Weapons" };
+
+  // Build item data from catalog
+  const items = [];
+  for (const [key, w] of Object.entries(WEAPON_CATALOG)) {
+    const typeLabel = w.type === "tracking" ? "Tracking" : "Direct-Fire";
+    const desc = [
+      `<p><strong>${typeLabel} ${w.mount} weapon</strong></p>`,
+      `<p>Damage: ${w.damage} | Range: ${w.range} | PCU: ${w.pcu} | BP: ${w.bp}</p>`,
+      w.speed ? `<p>Tracking Speed: ${w.speed} hexes | Class: ${w.trackingClass ?? "medium"}</p>` : "",
+    ].join("");
+
+    items.push({
+      name: w.name,
+      type: "equipment", // sf2e-safe type
+      img: w.type === "tracking" ? "icons/svg/explosion.svg" : "icons/svg/sword.svg",
+      system: {
+        description: { value: desc },
+        traits: { value: [], rarity: "common" },
+        quantity: 1,
+        bulk: { value: 0 }
+      },
+      flags: {
+        [MODULE_ID]: {
+          isStarshipWeapon: true,
+          weaponData: w,
+          catalogKey: key
+        }
+      }
+    });
+  }
+
+  // Create all items in the compendium
+  try {
+    await Item.createDocuments(items, { pack: pack.collection });
+    console.log(`${MODULE_ID} | Populated weapon compendium with ${items.length} weapons`);
+  } catch (e) {
+    console.warn(`${MODULE_ID} | Error populating weapon compendium:`, e);
+  }
+
+  return pack;
 }

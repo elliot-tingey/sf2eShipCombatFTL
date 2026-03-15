@@ -1,53 +1,53 @@
 <div class="sc-player-sheet">
+
   <header class="sc-header">
     <img class="sc-portrait" src="{{img}}" />
     <div class="sc-header-info">
       <h1>{{name}}</h1>
       <div class="sc-derived-row">
-        <span class="sc-derived">AC <strong>{{ac}}</strong></span>
-        <span class="sc-derived">TL <strong>{{tl}}</strong></span>
-        <span class="sc-derived">Speed <strong>{{speed}}</strong></span>
+        <span class="sc-badge sc-badge-ac">AC {{ac}}</span>
+        <span class="sc-badge sc-badge-tl">TL {{tl}}</span>
+        <span class="sc-badge sc-badge-speed">Speed {{speed}}</span>
       </div>
     </div>
   </header>
 
-  {{!-- Status Bars --}}
-  <div class="sc-status-bars">
+  <div class="sc-bars-row">
     <div class="sc-bar-group">
-      <label>Hull {{hullCurrent}}/{{hullMax}}</label>
+      <div class="sc-bar-label">Hull {{hullCurrent}} / {{hullMax}}</div>
       <div class="sc-bar sc-bar-hull"><div class="sc-bar-fill" style="width:{{hullPercent}}%"></div></div>
     </div>
     <div class="sc-bar-group">
-      <label>Shields {{shieldCurrent}}/{{shieldMax}}</label>
+      <div class="sc-bar-label">Shields {{shieldCurrent}} / {{shieldMax}}</div>
       <div class="sc-bar sc-bar-shield"><div class="sc-bar-fill" style="width:{{shieldPercent}}%"></div></div>
     </div>
   </div>
 
-  <nav class="sheet-tabs sc-tabs" data-group="primary">
-    <a class="item active" data-tab="overview" data-group="primary">Overview</a>
+  <nav class="sc-tabs">
+    <button type="button" class="sc-tab active" data-sc-tab="overview">Overview</button>
     {{#each roles}}
-      <a class="item" data-tab="role-{{this.id}}" data-group="primary"><i class="fas {{this.icon}}"></i> {{this.label}}</a>
+      <button type="button" class="sc-tab" data-sc-tab="role-{{this.id}}"><i class="fas {{this.icon}}"></i> {{this.label}}</button>
     {{/each}}
-    <a class="item" data-tab="cargo" data-group="primary"><i class="fas fa-boxes-stacked"></i> Cargo</a>
+    <button type="button" class="sc-tab" data-sc-tab="inventory"><i class="fas fa-boxes-stacked"></i> Cargo</button>
   </nav>
 
-  <div class="sc-player-body">
+  <div class="sc-body">
 
-    {{!-- Overview Tab --}}
-    <div class="tab active" data-tab="overview" data-group="primary">
+    {{!-- Overview --}}
+    <div class="tab-pane active" data-sc-pane="overview">
       <div class="sc-overview-grid">
-        <div class="sc-overview-col">
-          <h3>Subsystems</h3>
+        <div>
+          <div class="sc-section-header">Subsystems</div>
           {{#each subsystems}}
             <div class="sc-sub-status sc-sev-{{this.severity}}">
               <i class="fas {{this.icon}}"></i>
               <span>{{this.name}}</span>
-              <span class="sc-sub-cond">{{this.conditionLabel}}</span>
+              <span class="sc-sub-cond sc-cond-{{this.severity}}">{{this.conditionLabel}}</span>
             </div>
           {{/each}}
         </div>
-        <div class="sc-overview-col">
-          <h3>Weapons</h3>
+        <div>
+          <div class="sc-section-header">Weapons</div>
           {{#each weapons}}
             <div class="sc-wep-status">
               <strong>{{this.name}}</strong>
@@ -57,28 +57,48 @@
           {{#unless weapons.length}}<p class="sc-empty">No weapons</p>{{/unless}}
         </div>
       </div>
-      {{#if notes}}<div class="sc-notes-box"><h3>Notes</h3><div>{{{notes}}}</div></div>{{/if}}
+      {{#if notes}}
+        <div class="sc-notes-box">
+          <div class="sc-section-header">Notes</div>
+          <div style="padding:6px 0;">{{{notes}}}</div>
+        </div>
+      {{/if}}
     </div>
 
-    {{!-- Role Tabs (placeholder content — actions come from combat UI) --}}
+    {{!-- Role Tabs --}}
     {{#each roles}}
-      <div class="tab" data-tab="role-{{this.id}}" data-group="primary">
-        <div class="sc-role-page">
-          <h2><i class="fas {{this.icon}}"></i> {{this.label}}</h2>
-          <p class="sc-hint">Actions for this role are available during starship combat. Open the combat panel (🚀 in token controls) to take actions.</p>
-        </div>
+      <div class="tab-pane" data-sc-pane="role-{{this.id}}">
+        <div class="sc-section-header"><i class="fas {{this.icon}}"></i> {{this.label}}</div>
+        <p class="sc-hint">Actions for this role are available during starship combat. Open the combat panel to take your turn.</p>
       </div>
     {{/each}}
 
-    {{!-- Cargo Tab --}}
-    <div class="tab" data-tab="cargo" data-group="primary">
-      <div class="sc-cargo-page">
-        <h2><i class="fas fa-boxes-stacked"></i> Cargo Hold</h2>
-        <p class="sc-hint">Drag and drop items from compendiums or the item directory to add them to the ship's cargo.</p>
-        <div class="sc-cargo-list">
-          <p class="sc-empty">Cargo inventory coming soon — use the actor's native inventory tab for now.</p>
+    {{!-- Inventory Tab --}}
+    <div class="tab-pane" data-sc-pane="inventory">
+      <div class="sc-section-header">Cargo Hold <span class="sc-header-count">{{inventory.length}} items</span></div>
+      <div class="sc-inv-table">
+        <div class="sc-inv-header">
+          <span class="sc-inv-col-name">Item</span>
+          <span class="sc-inv-col-val">Value</span>
+          <span class="sc-inv-col-qty">Qty</span>
+          <span class="sc-inv-col-bulk">Bulk</span>
         </div>
+        {{#each inventory}}
+          <div class="sc-inv-row">
+            <span class="sc-inv-col-name"><img src="{{this.img}}" width="20" height="20" /> {{this.name}}</span>
+            <span class="sc-inv-col-val">{{this.value}}</span>
+            <span class="sc-inv-col-qty">{{this.quantity}}</span>
+            <span class="sc-inv-col-bulk">{{this.bulk}}</span>
+          </div>
+        {{/each}}
+        {{#unless hasInventory}}
+          <div class="sc-inv-empty">
+            <i class="fas fa-boxes-stacked"></i>
+            <p>No cargo aboard</p>
+          </div>
+        {{/unless}}
       </div>
     </div>
+
   </div>
 </div>
