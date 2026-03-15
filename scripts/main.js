@@ -1,71 +1,55 @@
 /* ==========================================================================
-   STARSHIP COMBAT — FTL EDITION
-   Main: Module initialization, hooks, settings, and scene controls
+   STARSHIP COMBAT — FTL EDITION v2
+   Main: Module init, hooks, actor registration, scene controls
    ========================================================================== */
 
+import { registerStarshipActor } from "./starship-actor.js";
 import { StarshipCombatUI } from "./combat-ui.js";
+import { CombatManager } from "./combat-manager.js";
 
 const MODULE_ID = "starship-combat-ftl";
 
-// ── Singleton instance ──────────────────────────────────────────────────────
 let _combatUI = null;
-
 function getCombatUI() {
   if (!_combatUI) _combatUI = new StarshipCombatUI();
   return _combatUI;
 }
 
-
-// ── Initialization ──────────────────────────────────────────────────────────
-
+// ── Init ────────────────────────────────────────────────────────────────────
 Hooks.once("init", () => {
-  console.log(`${MODULE_ID} | Initializing Starship Combat — FTL Edition`);
+  console.log(`${MODULE_ID} | Initializing Starship Combat — FTL Edition v2`);
 
-  // Register module settings
+  // Register the Starship actor type
+  registerStarshipActor();
+
+  // Settings
   game.settings.register(MODULE_ID, "enableChatCards", {
     name: "Enable Chat Cards",
-    hint: "Post combat actions and results to the chat log.",
-    scope: "world",
-    config: true,
-    type: Boolean,
-    default: true
+    hint: "Post combat actions to the chat log.",
+    scope: "world", config: true, type: Boolean, default: true
   });
-
-  game.settings.register(MODULE_ID, "autoAdvancePhase", {
-    name: "Auto-Advance Phase",
-    hint: "Automatically advance to the next phase when all roles for the current phase have acted.",
-    scope: "world",
-    config: true,
-    type: Boolean,
-    default: false
-  });
-
-  // Register Handlebars helpers
-  Handlebars.registerHelper("scIf", function(a, b, opts) {
-    return a === b ? opts.fn(this) : opts.inverse(this);
-  });
-
-  console.log(`${MODULE_ID} | Initialization complete`);
 });
 
-
-// ── Ready Hook ──────────────────────────────────────────────────────────────
-
+// ── Ready ───────────────────────────────────────────────────────────────────
 Hooks.once("ready", () => {
   console.log(`${MODULE_ID} | Module ready`);
 
-  // Make accessible globally for macros
+  // Global API
   game.modules.get(MODULE_ID).api = {
-    openCombatUI: () => getCombatUI().render({force: true}),
-    getCombatUI
+    openCombatUI: () => getCombatUI().render({ force: true }),
+    getCombatUI,
+    getCombatManager: () => CombatManager.get()
+  };
+
+  globalThis.StarshipCombat = {
+    open: () => getCombatUI().render({ force: true }),
+    close: () => { if (_combatUI) _combatUI.close(); },
+    manager: () => CombatManager.get()
   };
 });
 
-
 // ── Scene Controls ──────────────────────────────────────────────────────────
-
 Hooks.on("getSceneControlButtons", (controls) => {
-  // Add a button to the token controls group
   const tokenControls = controls.find(c => c.name === "token");
   if (tokenControls) {
     tokenControls.tools.push({
@@ -73,20 +57,29 @@ Hooks.on("getSceneControlButtons", (controls) => {
       title: "Starship Combat",
       icon: "fas fa-rocket",
       button: true,
-      onClick: () => getCombatUI().render({force: true}),
+      onClick: () => getCombatUI().render({ force: true }),
       visible: game.user.isGM
     });
   }
 });
 
-
-// ── Macro Support ───────────────────────────────────────────────────────────
-
-Hooks.once("ready", () => {
-  // Register a global function for easy macro access
-  globalThis.StarshipCombat = {
-    open: () => getCombatUI().render({force: true}),
-    close: () => { if (_combatUI) _combatUI.close(); },
-    getState: () => getCombatUI().combatState
-  };
+// ── Actor Type Icon ─────────────────────────────────────────────────────────
+Hooks.on("renderActorDirectory", (app, html) => {
+  // Add starship icon to starship actors in the directory
+  html.querySelectorAll?.(".document")?.forEach(el => {
+    const id = el.dataset?.documentId;
+    if (id) {
+      const actor = game.actors.get(id);
+      if (actor?.type === "starship") {
+        const nameEl = el.querySelector(".document-name");
+        if (nameEl && !nameEl.querySelector(".fa-rocket")) {
+          const icon = document.createElement("i");
+          icon.className = "fas fa-rocket";
+          icon.style.marginRight = "4px";
+          icon.style.opacity = "0.6";
+          nameEl.prepend(icon);
+        }
+      }
+    }
+  });
 });

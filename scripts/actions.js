@@ -1,639 +1,707 @@
 /* ==========================================================================
-   STARSHIP COMBAT — FTL EDITION
-   Actions: All 20 crew role actions with roll mechanics and effects
+   STARSHIP COMBAT — FTL EDITION v2
+   Actions: All 5 roles with native Foundry rolls
    ========================================================================== */
 
-import {
-  SYSTEMS, SYSTEM_IDS, ROLES, WEAPON_TYPES, RANGE_LABELS,
-  getEffectivePower, getSystemPenalty, getSensorBonus,
-  getShipAC, getShipEvasion, applyDamage, getFreePower
-} from "./combat-engine.js";
+import { ROLES, CRITICAL_SYSTEMS, SHIELD_QUADRANTS, MANEUVERABILITY } from "./constants.js";
+import { calcAC, calcTL, calcGunneryMod, applyDamage, createTrackingProjectile, getCritPenalties } from "./combat-engine.js";
+import { CombatManager } from "./combat-manager.js";
+
+// ── Native Foundry Roll Helper ──────────────────────────────────────────────
+
+/**
+ * Perform a roll using Foundry's native Roll system, posting to chat.
+ */
+async function rollCheck(formula, flavorHtml, speaker) {
+  const roll = await new Roll(formula).evaluate();
+  await roll.toMessage({
+    speaker: speaker ?? { alias: "Starship Combat" },
+    flavor: flavorHtml
+  });
+  return roll;
+}
+
 
 // ── Action Definitions ──────────────────────────────────────────────────────
 
 export const ACTIONS = {
 
-  // ─── PILOT ──────────────────────────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PILOT
+  // ═══════════════════════════════════════════════════════════════════════════
   pilot: [
     {
-      id: "evasiveManeuvers",
-      name: "Evasive Maneuvers",
-      description: "Piloting DC 15 — Boost ship evasion this round. Crit: double bonus.",
+      id: "move",
+      name: "Move",
+      description: "Move up to the ship's speed. This is a free action — does not consume your turn.",
+      isFreeAction: true,
       skill: "piloting",
-      dc: 15,
       requiresTarget: false,
-      execute: async (state, ship, enemyShip, rollResult) => {
-        if (rollResult.critSuccess) {
-          ship.modifiers.evasionBonus = (ship.modifiers.evasionBonus ?? 0) + 4;
-          return { success: true, message: `Brilliant flying! Ship evasion boosted by +4 this round.` };
-        } else if (rollResult.success) {
-          ship.modifiers.evasionBonus = (ship.modifiers.evasionBonus ?? 0) + 2;
-          return { success: true, message: `Evasive pattern engaged. Ship evasion boosted by +2 this round.` };
-        }
-        return { success: false, message: `The maneuver fails to gain any evasive advantage.` };
+      execute: async (ctx) => {
+        const speed = ctx.ship.shipData.speed;
+        const critPen = getCritPenalties(ctx.ship.shipData);
+        const effectiveSpeed = Math.max(0, speed + critPen.speed);
+        ctx.mgr.log.push(`[${ctx.ship.name}] Pilot moves up to ${effectiveSpeed} hexes.`);
+        await ChatMessage.create({
+          content: `<div class="sc-chat-card"><strong>${ctx.ship.name}</strong> moves up to <strong>${effectiveSpeed} hexes</strong>.</div>`,
+          speaker: { alias: ctx.ship.name }
+        });
+        return { success: true, freeAction: true, message: `Moves up to ${effectiveSpeed} hexes.` };
       }
     },
     {
-      id: "fullThrust",
-      name: "Full Thrust",
-      description: "Piloting DC 12 — Change engagement range (close/medium/long).",
+      id: "hitTheThrusters",
+      name: "Hit the Thrusters",
+      description: "Piloting check — Double the ship's movement speed for 1 turn.",
       skill: "piloting",
-      dc: 12,
       requiresTarget: false,
-      requiresRange: true,
-      execute: async (state, ship, enemyShip, rollResult, options) => {
-        if (rollResult.success) {
-          const oldRange = state.range;
-          state.range = options.targetRange ?? "medium";
-          return { success: true, message: `Engines burn hard — range shifts from ${RANGE_LABELS[oldRange]} to ${RANGE_LABELS[state.range]}.` };
+      execute: async (ctx) => {
+        const dc = 10 + Math.floor(1.5 * (ctx.ship.shipData.tier ?? 1));
+        const roll = await rollCheck(
+          `1d20 + ${ctx.skillMod}`,
+          `<div class="sc-chat-card"><strong>${ctx.ship.name}</strong> — Hit the Thrusters (DC ${dc})</div>`,
+          { alias: ctx.crewName }
+        );
+        if (roll.total >= dc) {
+          const speed = ctx.ship.shipData.speed;
+          const doubled = speed * 2;
+          ctx.mgr.log.push(`[${ctx.ship.name}] Thrusters engaged! Speed doubled to ${doubled} for this round.`);
+          return { success: true, message: `Speed doubled to ${doubled} this round.` };
         }
-        return { success: false, message: `Couldn't break from current vector. Range unchanged.` };
+        return { success: false, message: `Failed to push the engines harder.` };
       }
     },
     {
-      id: "flyby",
-      name: "Flyby",
-      description: "Piloting DC 18 — Next friendly attack gets +2 (crit: +4).",
-      skill: "piloting",
-      dc: 18,
+      id: "commandComputer",
+      name: "Command Computer",
+      description: "Task the ship's computer to perform 1 action from a different role. Uses the computer's stats.",
+      skill: "computers",
       requiresTarget: false,
-      execute: async (state, ship, enemyShip, rollResult) => {
-        if (rollResult.critSuccess) {
-          ship.modifiers.attackBonus = (ship.modifiers.attackBonus ?? 0) + 4;
-          return { success: true, message: `Perfect flyby — exposed the enemy's flank. Next attack gets +4!` };
-        } else if (rollResult.success) {
-          ship.modifiers.attackBonus = (ship.modifiers.attackBonus ?? 0) + 2;
-          return { success: true, message: `Good positioning. Next attack gets +2.` };
-        }
-        return { success: false, message: `The flyby doesn't achieve the desired angle.` };
+      isCommandComputer: true,
+      execute: async (ctx) => {
+        // This is resolved via a secondary action selection in the UI
+        // The computer's bonus is used instead of a crew member's
+        const computerBonus = ctx.ship.shipData.computerBonus ?? 0;
+        ctx.mgr.log.push(`[${ctx.ship.name}] Ship computer tasked with ${ctx.subAction?.name ?? "an action"} (bonus: +${computerBonus}).`);
+        return { success: true, message: `Computer executing: ${ctx.subAction?.name ?? "unknown action"}.`, computerAction: true, computerBonus };
       }
     },
     {
-      id: "rammingSpeed",
-      name: "Ramming Speed",
-      description: "Piloting DC 20 — Ram the enemy. Both ships take damage. Crit: double to enemy.",
+      id: "evade",
+      name: "Evade",
+      description: "Piloting check — Gain +2 AC and +2 TL until next round. Fail by 10+: -2 AC and -2 TL.",
       skill: "piloting",
-      dc: 20,
       requiresTarget: false,
-      execute: async (state, ship, enemyShip, rollResult) => {
-        if (rollResult.success) {
-          const enginePow = getEffectivePower(ship.systems.engines);
-          const baseDmg = enginePow + 2;
-
-          let enemyDmgFormula = rollResult.critSuccess ? `${baseDmg * 2}d6` : `${baseDmg}d6`;
-          let selfDmgFormula = `${Math.ceil(baseDmg / 2)}d6`;
-
-          const enemyRoll = await new Roll(enemyDmgFormula).evaluate();
-          const selfRoll = await new Roll(selfDmgFormula).evaluate();
-
-          const enemyReport = applyDamage(enemyShip, enemyRoll.total, "engines", "kinetic", rollResult.critSuccess);
-          const selfReport = applyDamage(ship, selfRoll.total, "engines", "kinetic", false);
-
-          // Force close range on successful ram
-          state.range = "close";
-
-          let msg = `RAMMING SPEED! Enemy takes ${enemyRoll.total} kinetic damage`;
-          if (enemyReport.systemDamage > 0) msg += ` (${enemyReport.systemDamage} to engines)`;
-          msg += `. Your ship takes ${selfRoll.total} damage from the impact.`;
-          if (rollResult.critSuccess) msg += ` (Critical: double damage to enemy!)`;
-          if (enemyReport.shipDestroyed) msg += ` THE ENEMY SHIP IS DESTROYED!`;
-
-          return {
-            success: true, message: msg,
-            rolls: [enemyRoll, selfRoll],
-            damageReport: enemyReport, selfDamageReport: selfReport
-          };
+      execute: async (ctx) => {
+        const dc = 10 + Math.floor(1.5 * (ctx.ship.shipData.tier ?? 1));
+        const roll = await rollCheck(
+          `1d20 + ${ctx.skillMod}`,
+          `<div class="sc-chat-card"><strong>${ctx.ship.name}</strong> — Evade (DC ${dc})</div>`,
+          { alias: ctx.crewName }
+        );
+        if (roll.total >= dc) {
+          ctx.mgr.applyModifier(ctx.ship.id, "acBonus", 2);
+          ctx.mgr.applyModifier(ctx.ship.id, "tlBonus", 2);
+          ctx.mgr.log.push(`[${ctx.ship.name}] Evasive maneuvers! +2 AC and +2 TL this round.`);
+          return { success: true, message: `+2 AC and +2 TL until next round.` };
+        } else if (roll.total <= dc - 10) {
+          ctx.mgr.applyModifier(ctx.ship.id, "acBonus", -2);
+          ctx.mgr.applyModifier(ctx.ship.id, "tlBonus", -2);
+          ctx.mgr.log.push(`[${ctx.ship.name}] Evasion failed badly! -2 AC and -2 TL.`);
+          return { success: false, message: `Critical failure! -2 AC and -2 TL.` };
         }
-        return { success: false, message: `The ramming attempt misses — the enemy evades your approach vector.` };
+        ctx.mgr.log.push(`[${ctx.ship.name}] Evasion failed. No effect.`);
+        return { success: false, message: `Evasion attempt fails.` };
+      }
+    },
+    {
+      id: "ram",
+      name: "Ram",
+      description: "Piloting check — Ram another ship. Deals damage to both, but more to the target.",
+      skill: "piloting",
+      requiresTarget: true,
+      targetType: "enemy",
+      execute: async (ctx) => {
+        const dc = 10 + Math.floor(1.5 * (ctx.targetShip.shipData.tier ?? 1));
+        const roll = await rollCheck(
+          `1d20 + ${ctx.skillMod}`,
+          `<div class="sc-chat-card"><strong>${ctx.ship.name}</strong> — RAMMING SPEED at ${ctx.targetShip.name}! (DC ${dc})</div>`,
+          { alias: ctx.crewName }
+        );
+        if (roll.total >= dc) {
+          const tier = ctx.ship.shipData.tier ?? 1;
+          const enemyDmgRoll = await rollCheck(
+            `${tier + 2}d6`, `<div class="sc-chat-card">Ram damage to ${ctx.targetShip.name}</div>`, { alias: ctx.ship.name }
+          );
+          const selfDmgRoll = await rollCheck(
+            `${Math.ceil(tier / 2) + 1}d6`, `<div class="sc-chat-card">Self-damage from ramming</div>`, { alias: ctx.ship.name }
+          );
+
+          const enemyReport = applyDamage(ctx.targetShip.shipData, enemyDmgRoll.total, "forward");
+          const selfReport = applyDamage(ctx.ship.shipData, selfDmgRoll.total, "forward");
+
+          let msg = `RAM! ${ctx.targetShip.name} takes ${enemyDmgRoll.total} damage. ${ctx.ship.name} takes ${selfDmgRoll.total} self-damage.`;
+          if (enemyReport.shipDestroyed) msg += ` 💀 ${ctx.targetShip.name} DESTROYED!`;
+          ctx.mgr.log.push(`[${ctx.ship.name}] ${msg}`);
+          return { success: true, message: msg };
+        }
+        ctx.mgr.log.push(`[${ctx.ship.name}] Ram attempt misses.`);
+        return { success: false, message: `Ram attempt fails.` };
+      }
+    },
+    {
+      id: "barrelRoll",
+      name: "Barrel Roll",
+      description: "Piloting check — Gain +TL bonus to avoid tracking weapons. Fail by 10+: -TL.",
+      skill: "piloting",
+      requiresTarget: false,
+      execute: async (ctx) => {
+        const dc = 10 + Math.floor(1.5 * (ctx.ship.shipData.tier ?? 1));
+        const roll = await rollCheck(
+          `1d20 + ${ctx.skillMod}`,
+          `<div class="sc-chat-card"><strong>${ctx.ship.name}</strong> — Barrel Roll (DC ${dc})</div>`,
+          { alias: ctx.crewName }
+        );
+        if (roll.total >= dc) {
+          const bonus = 2;
+          ctx.mgr.applyModifier(ctx.ship.id, "tlBonus", bonus);
+          ctx.mgr.log.push(`[${ctx.ship.name}] Barrel roll! +${bonus} TL vs tracking weapons.`);
+          return { success: true, message: `+${bonus} TL against tracking weapons this round.` };
+        } else if (roll.total <= dc - 10) {
+          ctx.mgr.applyModifier(ctx.ship.id, "tlBonus", -2);
+          ctx.mgr.log.push(`[${ctx.ship.name}] Barrel roll failed badly! -2 TL.`);
+          return { success: false, message: `Failed! -2 TL this round.` };
+        }
+        return { success: false, message: `Barrel roll has no effect.` };
+      }
+    },
+    {
+      id: "lineUpTheShot",
+      name: "Line Up the Shot",
+      description: "Sacrifice defense for offense. -2 AC, -2 TL, but all attacks this turn roll twice and take the better result.",
+      skill: null,
+      requiresTarget: false,
+      autoSuccess: true,
+      execute: async (ctx) => {
+        ctx.mgr.applyModifier(ctx.ship.id, "acBonus", -2);
+        ctx.mgr.applyModifier(ctx.ship.id, "tlBonus", -2);
+        ctx.mgr.applyModifier(ctx.ship.id, "attackAdvantage", 1);
+        ctx.mgr.log.push(`[${ctx.ship.name}] Lining up the shot. -2 AC, -2 TL, but attacks have advantage.`);
+        await ChatMessage.create({
+          content: `<div class="sc-chat-card"><strong>${ctx.ship.name}</strong> lines up the shot — <em>-2 AC, -2 TL, attacks have advantage this round.</em></div>`,
+          speaker: { alias: ctx.crewName }
+        });
+        return { success: true, message: `-2 AC, -2 TL. Attacks have advantage.` };
       }
     }
   ],
 
-  // ─── GUNNER ─────────────────────────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════════
+  // GUNNER
+  // ═══════════════════════════════════════════════════════════════════════════
   gunner: [
     {
-      id: "fireWeapon",
-      name: "Fire Weapon",
-      description: "Attack roll vs enemy AC — Fire one weapon at a target system.",
+      id: "fireDirectWeapon",
+      name: "Fire Direct Weapon",
+      description: "Gunnery check vs target's AC — Fire a direct-fire weapon.",
       skill: "gunnery",
-      dc: null, // vs enemy AC
       requiresTarget: true,
       requiresWeapon: true,
-      execute: async (state, ship, enemyShip, rollResult, options) => {
-        const weapon = ship.weapons[options.weaponIndex ?? 0];
+      targetType: "enemy",
+      execute: async (ctx) => {
+        const weapon = ctx.weapon;
         if (!weapon) return { success: false, message: "No weapon selected." };
-        if (weapon.ammo === 0) return { success: false, message: `${weapon.name} is out of ammunition!` };
 
-        // Consume ammo
-        if (weapon.ammo > 0) weapon.ammo--;
+        const targetAC = calcAC(ctx.targetShip.shipData);
+        const hasAdvantage = ctx.mgr.getModifier(ctx.ship.id, "attackAdvantage") > 0;
+        const computerBonus = ctx.ship.shipData.computerBonus ?? 0;
+        const formula = `1d20 + ${ctx.skillMod} + ${computerBonus}`;
 
-        const targetAC = getShipAC(enemyShip);
-        const sensorBonus = getSensorBonus(ship);
-        const attackBonus = (ship.modifiers.attackBonus ?? 0);
-        const rangeBonus = WEAPON_TYPES[weapon.type]?.rangeBonus?.[state.range] ?? 0;
-        const weaponPenalty = getSystemPenalty(ship.systems.weapons);
-
-        const totalBonus = rollResult.naturalRoll + sensorBonus + attackBonus + rangeBonus + weaponPenalty + (options.skillMod ?? 0);
-        const hit = totalBonus >= targetAC;
-        const crit = totalBonus >= targetAC + 10;
-
-        if (hit) {
-          const dmgRoll = await new Roll(weapon.damage).evaluate();
-          let totalDmg = dmgRoll.total;
-          if (crit) totalDmg = Math.round(totalDmg * 1.5);
-
-          const report = applyDamage(enemyShip, totalDmg, options.targetSystem, weapon.type, crit);
-
-          let msg = `${weapon.name} hits ${SYSTEMS[options.targetSystem]?.label}! `;
-          msg += `${totalDmg} ${WEAPON_TYPES[weapon.type]?.label} damage`;
-          if (report.shieldAbsorbed > 0) msg += ` (${report.shieldAbsorbed} absorbed by shields)`;
-          if (report.armorReduced > 0) msg += ` (${report.armorReduced} reduced by armor)`;
-          if (report.systemDamage > 0) msg += `. System takes ${report.systemDamage} damage`;
-          if (report.hullDamage > 0) msg += `. Hull takes ${report.hullDamage} damage`;
-          if (crit) msg += ` ★ CRITICAL HIT ★`;
-          if (report.fire) msg += ` 🔥 Fire started!`;
-          if (report.systemDestroyed) msg += ` ⚠ ${SYSTEMS[options.targetSystem]?.label} DISABLED!`;
-          if (report.shipDestroyed) msg += ` 💀 ENEMY SHIP DESTROYED!`;
-          msg += `.`;
-
-          return { success: true, message: msg, rolls: [dmgRoll], damageReport: report, hit: true, crit };
+        let roll;
+        if (hasAdvantage) {
+          const r1 = await new Roll(formula).evaluate();
+          const r2 = await new Roll(formula).evaluate();
+          roll = r1.total >= r2.total ? r1 : r2;
+          await roll.toMessage({
+            speaker: { alias: ctx.crewName },
+            flavor: `<div class="sc-chat-card"><strong>${ctx.ship.name}</strong> fires ${weapon.name} at ${ctx.targetShip.name} (AC ${targetAC}) — <em>Advantage: ${r1.total} / ${r2.total}</em></div>`
+          });
+        } else {
+          roll = await rollCheck(formula,
+            `<div class="sc-chat-card"><strong>${ctx.ship.name}</strong> fires ${weapon.name} at ${ctx.targetShip.name} (AC ${targetAC})</div>`,
+            { alias: ctx.crewName }
+          );
         }
 
-        return { success: false, message: `${weapon.name} fires at ${SYSTEMS[options.targetSystem]?.label} — MISS! (Rolled ${totalBonus} vs AC ${targetAC})`, hit: false };
+        if (roll.total >= targetAC) {
+          const dmgRoll = await rollCheck(weapon.damage,
+            `<div class="sc-chat-card">${weapon.name} damage</div>`,
+            { alias: ctx.ship.name }
+          );
+          const quadrant = ctx.targetQuadrant ?? "forward";
+          const isTargeted = ctx.isTargetingSubsystem && ctx.mgr.isScanned(ctx.targetShip.id);
+          const targetedSys = isTargeted ? ctx.targetedSystem : null;
+
+          const report = applyDamage(ctx.targetShip.shipData, dmgRoll.total, quadrant, targetedSys, isTargeted);
+
+          let msg = `${weapon.name} HITS ${ctx.targetShip.name} for ${dmgRoll.total} damage`;
+          if (report.shieldAbsorbed > 0) msg += ` (${report.shieldAbsorbed} absorbed by ${quadrant} shields)`;
+          if (report.hullDamage > 0) msg += `. ${report.hullDamage} hull damage`;
+          if (report.belowDT) msg += `. Below damage threshold — no effect`;
+          if (report.criticalTriggered) msg += `. ⚠ CRITICAL: ${CRITICAL_SYSTEMS[report.criticalSystem]?.label} now ${report.criticalCondition}!`;
+          if (report.subsystemHit) msg += `. Stray hit damages ${CRITICAL_SYSTEMS[report.subsystemHit]?.label}!`;
+          if (report.shipDestroyed) msg += `. 💀 ${ctx.targetShip.name} DESTROYED!`;
+          ctx.mgr.log.push(`[${ctx.ship.name}] ${msg}`);
+          return { success: true, message: msg, hit: true };
+        }
+
+        ctx.mgr.log.push(`[${ctx.ship.name}] ${weapon.name} MISSES ${ctx.targetShip.name}. (${roll.total} vs AC ${targetAC})`);
+        return { success: false, message: `${weapon.name} misses. (${roll.total} vs AC ${targetAC})`, hit: false };
+      }
+    },
+    {
+      id: "fireTrackingWeapon",
+      name: "Fire Tracking Weapon",
+      description: "Gunnery check vs target's TL — Launch a tracking projectile (missile/torpedo).",
+      skill: "gunnery",
+      requiresTarget: true,
+      requiresWeapon: true,
+      targetType: "enemy",
+      isTracking: true,
+      execute: async (ctx) => {
+        const weapon = ctx.weapon;
+        if (!weapon || weapon.type !== "tracking") return { success: false, message: "Select a tracking weapon." };
+
+        const targetTL = calcTL(ctx.targetShip.shipData);
+        const computerBonus = ctx.ship.shipData.computerBonus ?? 0;
+        const roll = await rollCheck(
+          `1d20 + ${ctx.skillMod} + ${computerBonus}`,
+          `<div class="sc-chat-card"><strong>${ctx.ship.name}</strong> launches ${weapon.name} at ${ctx.targetShip.name} (TL ${targetTL})</div>`,
+          { alias: ctx.crewName }
+        );
+
+        if (roll.total >= targetTL) {
+          // Create tracking projectile
+          const proj = createTrackingProjectile(
+            ctx.ship.id, ctx.targetShip.id, weapon, ctx.skillMod, ctx.mgr.round
+          );
+          ctx.mgr.trackingProjectiles.push(proj);
+
+          const msg = `${weapon.name} launched! Tracking (${proj.trackingClass}) — arrives in ${proj.turnsRemaining} turn(s).`;
+          ctx.mgr.log.push(`[${ctx.ship.name}] ${msg}`);
+          return { success: true, message: msg };
+        }
+
+        ctx.mgr.log.push(`[${ctx.ship.name}] ${weapon.name} fails to lock. (${roll.total} vs TL ${targetTL})`);
+        return { success: false, message: `Failed to achieve target lock. (${roll.total} vs TL ${targetTL})` };
       }
     },
     {
       id: "broadside",
       name: "Broadside",
-      description: "Fire ALL weapons at -2 penalty each. Pick a target system for each.",
+      description: "Fire ALL direct-fire weapons at -2 penalty each. All at the same target.",
       skill: "gunnery",
-      dc: null,
       requiresTarget: true,
-      requiresWeapon: false,
-      isBroadside: true,
-      execute: async (state, ship, enemyShip, rollResult, options) => {
+      targetType: "enemy",
+      execute: async (ctx) => {
+        const weapons = ctx.ship.shipData.weapons.filter(w => w.type === "directFire");
+        if (weapons.length === 0) return { success: false, message: "No direct-fire weapons." };
+
+        const targetAC = calcAC(ctx.targetShip.shipData);
+        const computerBonus = ctx.ship.shipData.computerBonus ?? 0;
         const results = [];
-        const targetAC = getShipAC(enemyShip);
-        const sensorBonus = getSensorBonus(ship);
-        const attackBonus = (ship.modifiers.attackBonus ?? 0);
-        const weaponPenalty = getSystemPenalty(ship.systems.weapons);
 
-        for (let i = 0; i < ship.weapons.length; i++) {
-          const weapon = ship.weapons[i];
-          if (weapon.ammo === 0) { results.push(`${weapon.name}: OUT OF AMMO`); continue; }
-          if (weapon.ammo > 0) weapon.ammo--;
-
-          const rangeBonus = WEAPON_TYPES[weapon.type]?.rangeBonus?.[state.range] ?? 0;
-          const attackRoll = await new Roll("1d20").evaluate();
-          const total = attackRoll.total + sensorBonus + attackBonus + rangeBonus + weaponPenalty + (options.skillMod ?? 0) - 2;
-          const hit = total >= targetAC;
-          const crit = total >= targetAC + 10;
-          const targetSys = options.targetSystem; // all target same system for broadside
-
-          if (hit) {
-            const dmgRoll = await new Roll(weapon.damage).evaluate();
-            let totalDmg = dmgRoll.total;
-            if (crit) totalDmg = Math.round(totalDmg * 1.5);
-            const report = applyDamage(enemyShip, totalDmg, targetSys, weapon.type, crit);
-            let msg = `${weapon.name}: HIT for ${totalDmg} dmg`;
-            if (crit) msg += ` ★CRIT★`;
-            if (report.systemDestroyed) msg += ` ⚠ SYSTEM DISABLED`;
-            if (report.fire) msg += ` 🔥`;
-            results.push(msg);
+        for (const weapon of weapons) {
+          const roll = await rollCheck(
+            `1d20 + ${ctx.skillMod} + ${computerBonus} - 2`,
+            `<div class="sc-chat-card">Broadside: ${weapon.name} at ${ctx.targetShip.name} (AC ${targetAC})</div>`,
+            { alias: ctx.crewName }
+          );
+          if (roll.total >= targetAC) {
+            const dmgRoll = await rollCheck(weapon.damage, `<div class="sc-chat-card">${weapon.name} damage</div>`, { alias: ctx.ship.name });
+            const report = applyDamage(ctx.targetShip.shipData, dmgRoll.total, ctx.targetQuadrant ?? "forward");
+            results.push(`${weapon.name}: HIT for ${dmgRoll.total}`);
           } else {
-            results.push(`${weapon.name}: MISS (${total} vs ${targetAC})`);
+            results.push(`${weapon.name}: MISS (${roll.total})`);
           }
         }
-        return { success: true, message: `BROADSIDE!\n` + results.join("\n") };
-      }
-    },
-    {
-      id: "preciseShot",
-      name: "Precise Shot",
-      description: "Attack at -4 penalty. On hit: +50% damage, double damage to targeted system.",
-      skill: "gunnery",
-      dc: null,
-      requiresTarget: true,
-      requiresWeapon: true,
-      execute: async (state, ship, enemyShip, rollResult, options) => {
-        const weapon = ship.weapons[options.weaponIndex ?? 0];
-        if (!weapon) return { success: false, message: "No weapon selected." };
-        if (weapon.ammo === 0) return { success: false, message: `${weapon.name} is out of ammunition!` };
-        if (weapon.ammo > 0) weapon.ammo--;
 
-        const targetAC = getShipAC(enemyShip);
-        const sensorBonus = getSensorBonus(ship);
-        const attackBonus = (ship.modifiers.attackBonus ?? 0);
-        const rangeBonus = WEAPON_TYPES[weapon.type]?.rangeBonus?.[state.range] ?? 0;
-        const weaponPenalty = getSystemPenalty(ship.systems.weapons);
-        const total = rollResult.naturalRoll + sensorBonus + attackBonus + rangeBonus + weaponPenalty + (options.skillMod ?? 0) - 4;
-        const hit = total >= targetAC;
-        const crit = total >= targetAC + 10;
-
-        if (hit) {
-          const dmgRoll = await new Roll(weapon.damage).evaluate();
-          let totalDmg = Math.round(dmgRoll.total * 1.5);
-          if (crit) totalDmg = Math.round(totalDmg * 1.5);
-
-          // For precise shot, system takes 80% and hull takes 20%
-          const sys = enemyShip.systems[options.targetSystem];
-          let sysDmg = 0, hullDmg = 0;
-          if (sys && sys.hp > 0) {
-            sysDmg = Math.ceil(totalDmg * 0.8);
-            hullDmg = Math.floor(totalDmg * 0.2);
-            sys.hp = Math.max(0, sys.hp - sysDmg);
-            if (sys.hp <= 0) sys.power = 0;
-          } else {
-            hullDmg = totalDmg;
-          }
-          enemyShip.hull.current = Math.max(0, enemyShip.hull.current - hullDmg);
-
-          let msg = `Precise shot hits ${SYSTEMS[options.targetSystem]?.label}! ${sysDmg} system damage, ${hullDmg} hull damage.`;
-          if (crit) msg += ` ★ CRITICAL! ★`;
-          if (sys && sys.hp <= 0) msg += ` ⚠ SYSTEM DISABLED!`;
-          if (enemyShip.hull.current <= 0) msg += ` 💀 ENEMY DESTROYED!`;
-          return { success: true, message: msg, rolls: [dmgRoll] };
-        }
-        return { success: false, message: `Precise shot misses ${SYSTEMS[options.targetSystem]?.label}. (${total} vs AC ${targetAC})` };
+        const msg = `BROADSIDE!\n` + results.join("\n");
+        ctx.mgr.log.push(`[${ctx.ship.name}] ${msg}`);
+        return { success: true, message: msg };
       }
     },
     {
       id: "suppressiveFire",
       name: "Suppressive Fire",
-      description: "Gunnery DC 15 — Enemy gets -2 to all checks this round (crit: -4).",
+      description: "Gunnery check — Enemy ship takes -2 to all gunnery checks this round.",
       skill: "gunnery",
-      dc: 15,
-      requiresTarget: false,
-      requiresWeapon: false,
-      execute: async (state, ship, enemyShip, rollResult) => {
-        if (rollResult.critSuccess) {
-          enemyShip.modifiers.allPenalty = (enemyShip.modifiers.allPenalty ?? 0) - 4;
-          return { success: true, message: `Withering suppressive fire! Enemy takes -4 to all checks this round.` };
-        } else if (rollResult.success) {
-          enemyShip.modifiers.allPenalty = (enemyShip.modifiers.allPenalty ?? 0) - 2;
-          return { success: true, message: `Suppressive fire pins the enemy down. -2 to all their checks this round.` };
+      requiresTarget: true,
+      targetType: "enemy",
+      execute: async (ctx) => {
+        const dc = 15 + Math.floor(1.5 * (ctx.ship.shipData.tier ?? 1));
+        const roll = await rollCheck(
+          `1d20 + ${ctx.skillMod}`,
+          `<div class="sc-chat-card"><strong>${ctx.ship.name}</strong> — Suppressive Fire at ${ctx.targetShip.name} (DC ${dc})</div>`,
+          { alias: ctx.crewName }
+        );
+        if (roll.total >= dc) {
+          ctx.mgr.applyModifier(ctx.targetShip.id, "attackBonus", -2);
+          ctx.mgr.log.push(`[${ctx.ship.name}] Suppressive fire pins ${ctx.targetShip.name}! -2 to their gunnery.`);
+          return { success: true, message: `${ctx.targetShip.name} takes -2 to gunnery checks this round.` };
         }
-        return { success: false, message: `Suppressive fire fails to find its mark.` };
+        return { success: false, message: `Suppressive fire fails.` };
       }
     }
   ],
 
-  // ─── SECURITY ──────────────────────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SECURITY
+  // ═══════════════════════════════════════════════════════════════════════════
   security: [
     {
-      id: "deepScan",
-      name: "Deep Scan",
-      description: "Computers DC 14 — Reveal enemy system HP and power levels.",
+      id: "scan",
+      name: "Scan",
+      description: "Computers check — Reveal enemy ship info. Each 5 over DC reveals more.",
       skill: "computers",
-      dc: 14,
-      requiresTarget: false,
-      execute: async (state, ship, enemyShip, rollResult) => {
-        if (rollResult.success) {
-          state.enemyScanned = true;
-          let msg = `Deep scan complete — enemy systems revealed:\n`;
-          for (const sysId of SYSTEM_IDS) {
-            const sys = enemyShip.systems[sysId];
-            msg += `  ${SYSTEMS[sysId].label}: ${sys.hp}/${sys.maxHp} HP, Power ${sys.power}/${sys.maxPower}`;
-            if (sys.status.length > 0) msg += ` [${sys.status.join(", ")}]`;
-            msg += `\n`;
-          }
-          if (rollResult.critSuccess) {
-            msg += `  Weapons:`;
-            for (const w of enemyShip.weapons) {
-              msg += `\n    ${w.name} (${w.damage} ${w.type}${w.ammo >= 0 ? `, ${w.ammo} ammo` : ""})`;
-            }
-          }
+      requiresTarget: true,
+      targetType: "enemy",
+      execute: async (ctx) => {
+        const dc = 5 + Math.floor(1.5 * (ctx.targetShip.shipData.tier ?? 1)) + (ctx.targetShip.shipData.countermeasuresBonus ?? 0);
+        const roll = await rollCheck(
+          `1d20 + ${ctx.skillMod}`,
+          `<div class="sc-chat-card"><strong>${ctx.ship.name}</strong> — Scan ${ctx.targetShip.name} (DC ${dc})</div>`,
+          { alias: ctx.crewName }
+        );
+        const margin = roll.total - dc;
+        if (margin >= 0) {
+          ctx.mgr.markScanned(ctx.targetShip.id);
+          let info = [`Basic info revealed. Subsystems now targetable.`];
+          if (margin >= 5) info.push(`Defenses: AC ${calcAC(ctx.targetShip.shipData)}, TL ${calcTL(ctx.targetShip.shipData)}, Hull ${ctx.targetShip.shipData.hull.current}/${ctx.targetShip.shipData.hull.max}`);
+          if (margin >= 10) info.push(`Weapon systems revealed.`);
+          if (margin >= 15) info.push(`Full ship manifest revealed.`);
+          const msg = info.join(" ");
+          ctx.mgr.log.push(`[${ctx.ship.name}] Scan: ${msg}`);
           return { success: true, message: msg };
         }
-        return { success: false, message: `Scan interference — unable to penetrate enemy countermeasures.` };
+        return { success: false, message: `Scan fails to penetrate countermeasures.` };
       }
     },
     {
       id: "launchBoarding",
       name: "Launch Boarding Party",
-      description: "Athletics DC 16 — Disable one enemy system for 1 round. Must be at Close range.",
+      description: "Athletics check — Send a boarding team to disable a system. Must be adjacent.",
       skill: "athletics",
-      dc: 16,
       requiresTarget: true,
-      requiresCloseRange: true,
-      execute: async (state, ship, enemyShip, rollResult, options) => {
-        if (state.range !== "close") return { success: false, message: `Must be at Close range to board!` };
-        const sys = enemyShip.systems[options.targetSystem];
-        if (rollResult.success) {
-          if (sys) {
-            sys.status.push("boarded");
-            const prevPower = sys.power;
-            sys.power = 0;
-            // Will be restored next round during cleanup
-            state.roundModifiers.enemy[`boardedRestore_${options.targetSystem}`] = prevPower;
-          }
-          let msg = `Boarding party breaches ${SYSTEMS[options.targetSystem]?.label}! System disabled for this round.`;
-          if (rollResult.critSuccess) {
-            const dmg = 1;
-            if (sys) sys.hp = Math.max(0, sys.hp - dmg);
-            msg += ` Critical: boarding party also deals 1 system damage!`;
-          }
+      targetType: "enemy",
+      execute: async (ctx) => {
+        const dc = 15 + Math.floor(1.5 * (ctx.targetShip.shipData.tier ?? 1));
+        const roll = await rollCheck(
+          `1d20 + ${ctx.skillMod}`,
+          `<div class="sc-chat-card"><strong>${ctx.ship.name}</strong> — Boarding Party at ${ctx.targetShip.name} (DC ${dc})</div>`,
+          { alias: ctx.crewName }
+        );
+        if (roll.total >= dc) {
+          // Escalate a random (or targeted if scanned) system's crit condition
+          const systems = Object.keys(CRITICAL_SYSTEMS);
+          const target = ctx.targetedSystem && ctx.mgr.isScanned(ctx.targetShip.id)
+            ? ctx.targetedSystem
+            : systems[Math.floor(Math.random() * systems.length)];
+
+          const { escalateCritCondition } = await import("./combat-engine.js");
+          const newCond = escalateCritCondition(ctx.targetShip.shipData, target);
+          const msg = `Boarding party hits ${CRITICAL_SYSTEMS[target]?.label}! Now: ${newCond}.`;
+          ctx.mgr.log.push(`[${ctx.ship.name}] ${msg}`);
           return { success: true, message: msg };
         }
-        return { success: false, message: `Boarding party repelled! The assault on ${SYSTEMS[options.targetSystem]?.label} fails.` };
+        return { success: false, message: `Boarding party repelled!` };
       }
     },
     {
       id: "braceForImpact",
       name: "Brace for Impact",
-      description: "Athletics DC 12 — Reduce next incoming damage by 1d6+2 (crit: 2d6+2).",
-      skill: "athletics",
-      dc: 12,
+      description: "Boost shields in one quadrant by redistributing points from others.",
+      skill: null,
       requiresTarget: false,
-      execute: async (state, ship, enemyShip, rollResult) => {
-        if (rollResult.success) {
-          const formula = rollResult.critSuccess ? "2d6+2" : "1d6+2";
-          const roll = await new Roll(formula).evaluate();
-          ship.modifiers.damageReduction = (ship.modifiers.damageReduction ?? 0) + roll.total;
-          return { success: true, message: `Bracing! Next incoming damage reduced by ${roll.total}.${rollResult.critSuccess ? " (Critical!)" : ""}`, rolls: [roll] };
+      autoSuccess: true,
+      requiresQuadrant: true,
+      execute: async (ctx) => {
+        const q = ctx.targetQuadrant ?? "forward";
+        const shields = ctx.ship.shipData.shields;
+        // Move 25% from other quadrants to the target quadrant
+        let bonus = 0;
+        for (const oq of SHIELD_QUADRANTS) {
+          if (oq === q) continue;
+          const transfer = Math.floor(shields[oq].current * 0.25);
+          shields[oq].current -= transfer;
+          bonus += transfer;
         }
-        return { success: false, message: `Crew scrambles but can't get into position in time.` };
+        shields[q].current = Math.min(shields[q].max + bonus, shields[q].current + bonus);
+        ctx.mgr.log.push(`[${ctx.ship.name}] Bracing! +${bonus} SP to ${q} shields.`);
+        await ChatMessage.create({
+          content: `<div class="sc-chat-card"><strong>${ctx.ship.name}</strong> braces for impact — <strong>+${bonus} SP</strong> to ${q} shields.</div>`,
+          speaker: { alias: ctx.crewName }
+        });
+        return { success: true, message: `+${bonus} SP to ${q} shields.` };
       }
     },
     {
       id: "electronicWarfare",
       name: "Electronic Warfare",
-      description: "Computers DC 16 — Jam enemy sensors: -2 to their attacks (crit: -4).",
+      description: "Computers check — Jam enemy sensors, reducing their gunnery checks.",
       skill: "computers",
-      dc: 16,
-      requiresTarget: false,
-      execute: async (state, ship, enemyShip, rollResult) => {
-        if (rollResult.critSuccess) {
-          enemyShip.modifiers.attackPenalty = (enemyShip.modifiers.attackPenalty ?? 0) - 4;
-          return { success: true, message: `Total sensor blackout on the enemy vessel! They take -4 to all attacks.` };
-        } else if (rollResult.success) {
-          enemyShip.modifiers.attackPenalty = (enemyShip.modifiers.attackPenalty ?? 0) - 2;
-          return { success: true, message: `Electronic countermeasures deployed. Enemy takes -2 to attacks.` };
+      requiresTarget: true,
+      targetType: "enemy",
+      execute: async (ctx) => {
+        const dc = 15 + Math.floor(1.5 * (ctx.targetShip.shipData.tier ?? 1));
+        const roll = await rollCheck(
+          `1d20 + ${ctx.skillMod}`,
+          `<div class="sc-chat-card"><strong>${ctx.ship.name}</strong> — Electronic Warfare vs ${ctx.targetShip.name} (DC ${dc})</div>`,
+          { alias: ctx.crewName }
+        );
+        if (roll.total >= dc) {
+          ctx.mgr.applyModifier(ctx.targetShip.id, "attackBonus", -2);
+          ctx.mgr.log.push(`[${ctx.ship.name}] ECM deployed! ${ctx.targetShip.name} takes -2 gunnery.`);
+          return { success: true, message: `${ctx.targetShip.name} takes -2 to gunnery.` };
         }
-        return { success: false, message: `ECM burst fails to disrupt enemy targeting.` };
+        return { success: false, message: `ECM fails.` };
       }
     }
   ],
 
-  // ─── ARCNET OFFICER ────────────────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════════
+  // ARCNET OFFICER
+  // ═══════════════════════════════════════════════════════════════════════════
   arcnet: [
     {
-      id: "boostSystem",
-      name: "Boost System",
-      description: "Arcana DC 14 — Add +1 effective power to a friendly system (crit: +2). Free, no reactor cost.",
-      skill: "arcana",
-      dc: 14,
-      requiresTarget: true,
-      targetsFriendly: true,
-      execute: async (state, ship, enemyShip, rollResult, options) => {
-        const sys = ship.systems[options.targetSystem];
-        if (!sys || sys.hp <= 0) return { success: false, message: `Cannot boost a disabled system.` };
-        if (rollResult.critSuccess) {
-          sys.power = Math.min(sys.maxPower + 2, sys.power + 2); // can exceed normal max!
-          return { success: true, message: `ArcNet surge! ${SYSTEMS[options.targetSystem]?.label} boosted by +2 power this round!` };
-        } else if (rollResult.success) {
-          sys.power = Math.min(sys.maxPower + 1, sys.power + 1);
-          return { success: true, message: `ArcNet channels energy into ${SYSTEMS[options.targetSystem]?.label}. +1 power this round.` };
+      id: "boostShields",
+      name: "Boost Shields",
+      description: "Mysticism check — Restore shield points to a quadrant.",
+      skill: "mysticism",
+      requiresTarget: false,
+      requiresQuadrant: true,
+      execute: async (ctx) => {
+        const dc = 15 + Math.floor(1.5 * (ctx.ship.shipData.tier ?? 1));
+        const roll = await rollCheck(
+          `1d20 + ${ctx.skillMod}`,
+          `<div class="sc-chat-card"><strong>${ctx.ship.name}</strong> — Arcane Shield Boost (DC ${dc})</div>`,
+          { alias: ctx.crewName }
+        );
+        if (roll.total >= dc) {
+          const q = ctx.targetQuadrant ?? "forward";
+          const restored = Math.max(1, roll.total - dc + 2);
+          const shields = ctx.ship.shipData.shields;
+          shields[q].current = Math.min(shields[q].max, shields[q].current + restored);
+          ctx.mgr.log.push(`[${ctx.ship.name}] ArcNet restores ${restored} SP to ${q} shields.`);
+          return { success: true, message: `+${restored} SP to ${q} shields.` };
         }
-        return { success: false, message: `The ArcNet surge destabilizes before reaching ${SYSTEMS[options.targetSystem]?.label}.` };
+        return { success: false, message: `Shield boost fails.` };
       }
     },
     {
       id: "hackSystems",
       name: "Hack Systems",
-      description: "Computers DC 18 — Reduce one enemy system's power by 1 (crit: by 2).",
+      description: "Computers check — Interfere with an enemy system, causing it to glitch.",
       skill: "computers",
-      dc: 18,
       requiresTarget: true,
-      execute: async (state, ship, enemyShip, rollResult, options) => {
-        const sys = enemyShip.systems[options.targetSystem];
-        if (!sys || sys.hp <= 0) return { success: false, message: `Target system is already offline.` };
-        if (rollResult.critSuccess) {
-          sys.power = Math.max(0, sys.power - 2);
-          return { success: true, message: `Full system intrusion! Enemy ${SYSTEMS[options.targetSystem]?.label} loses 2 power!` };
-        } else if (rollResult.success) {
-          sys.power = Math.max(0, sys.power - 1);
-          return { success: true, message: `Hack successful — enemy ${SYSTEMS[options.targetSystem]?.label} loses 1 power.` };
+      targetType: "enemy",
+      execute: async (ctx) => {
+        const dc = 15 + Math.floor(1.5 * (ctx.targetShip.shipData.tier ?? 1)) + (ctx.targetShip.shipData.countermeasuresBonus ?? 0);
+        const roll = await rollCheck(
+          `1d20 + ${ctx.skillMod}`,
+          `<div class="sc-chat-card"><strong>${ctx.ship.name}</strong> — Hack ${ctx.targetShip.name} systems (DC ${dc})</div>`,
+          { alias: ctx.crewName }
+        );
+        if (roll.total >= dc) {
+          const systems = Object.keys(CRITICAL_SYSTEMS);
+          const target = ctx.targetedSystem && ctx.mgr.isScanned(ctx.targetShip.id)
+            ? ctx.targetedSystem
+            : systems[Math.floor(Math.random() * systems.length)];
+          const { escalateCritCondition } = await import("./combat-engine.js");
+          const newCond = escalateCritCondition(ctx.targetShip.shipData, target);
+          ctx.mgr.log.push(`[${ctx.ship.name}] Hack success! ${ctx.targetShip.name}'s ${CRITICAL_SYSTEMS[target]?.label} → ${newCond}.`);
+          return { success: true, message: `${CRITICAL_SYSTEMS[target]?.label} hacked to ${newCond}!` };
         }
-        return { success: false, message: `Enemy firewalls hold. The hack fails.` };
+        return { success: false, message: `Hack fails.` };
       }
     },
     {
-      id: "arcaneBarrier",
-      name: "Arcane Barrier",
-      description: "Arcana DC 15 — Grant temporary shield points (roll - 10). Crit: double.",
-      skill: "arcana",
-      dc: 15,
+      id: "improveCountermeasures",
+      name: "Improve Countermeasures",
+      description: "Mysticism check — Boost TL against incoming tracking weapons.",
+      skill: "mysticism",
       requiresTarget: false,
-      execute: async (state, ship, enemyShip, rollResult) => {
-        if (rollResult.success) {
-          let tempShields = rollResult.total - 10;
-          if (rollResult.critSuccess) tempShields *= 2;
-          tempShields = Math.max(1, tempShields);
-          ship.shields.current = Math.min(ship.shields.max + tempShields, ship.shields.current + tempShields);
-          return { success: true, message: `Arcane barrier materializes — ${tempShields} temporary shield points!${rollResult.critSuccess ? " (Critical!)" : ""}` };
+      execute: async (ctx) => {
+        const dc = 12 + Math.floor(1.5 * (ctx.ship.shipData.tier ?? 1));
+        const roll = await rollCheck(
+          `1d20 + ${ctx.skillMod}`,
+          `<div class="sc-chat-card"><strong>${ctx.ship.name}</strong> — Improve Countermeasures (DC ${dc})</div>`,
+          { alias: ctx.crewName }
+        );
+        if (roll.total >= dc) {
+          ctx.mgr.applyModifier(ctx.ship.id, "tlBonus", 2);
+          ctx.mgr.log.push(`[${ctx.ship.name}] Countermeasures improved! +2 TL.`);
+          return { success: true, message: `+2 TL this round.` };
         }
-        return { success: false, message: `The barrier flickers and collapses before it can stabilize.` };
+        return { success: false, message: `Countermeasure enhancement fails.` };
       }
     },
     {
-      id: "countermeasures",
-      name: "Countermeasures",
-      description: "Computers DC 16 — Remove one active enemy buff or remove a debuff on your ship.",
-      skill: "computers",
-      dc: 16,
+      id: "mysticHaze",
+      name: "Mystic Haze",
+      description: "Mysticism check — Project a haze that grants +1 AC to your ship.",
+      skill: "mysticism",
       requiresTarget: false,
-      execute: async (state, ship, enemyShip, rollResult) => {
-        if (rollResult.success) {
-          // Remove a beneficial modifier from the enemy or detrimental from self
-          let cleaned = false;
-          // Try to clear enemy buffs
-          if (enemyShip.modifiers.evasionBonus > 0) { delete enemyShip.modifiers.evasionBonus; cleaned = true; }
-          else if (enemyShip.modifiers.attackBonus > 0) { delete enemyShip.modifiers.attackBonus; cleaned = true; }
-          // Or clear self debuffs
-          else if (ship.modifiers.allPenalty < 0) { delete ship.modifiers.allPenalty; cleaned = true; }
-          else if (ship.modifiers.attackPenalty < 0) { delete ship.modifiers.attackPenalty; cleaned = true; }
-
-          if (cleaned) {
-            return { success: true, message: `Countermeasures deployed! Neutralized enemy enhancement.` };
-          }
-          return { success: true, message: `Countermeasures active — no active threats to neutralize, but systems are primed.` };
+      execute: async (ctx) => {
+        const dc = 12 + Math.floor(1.5 * (ctx.ship.shipData.tier ?? 1));
+        const roll = await rollCheck(
+          `1d20 + ${ctx.skillMod}`,
+          `<div class="sc-chat-card"><strong>${ctx.ship.name}</strong> — Mystic Haze (DC ${dc})</div>`,
+          { alias: ctx.crewName }
+        );
+        if (roll.total >= dc) {
+          ctx.mgr.applyModifier(ctx.ship.id, "acBonus", 1);
+          ctx.mgr.log.push(`[${ctx.ship.name}] Mystic haze deployed! +1 AC.`);
+          return { success: true, message: `+1 AC this round.` };
         }
-        return { success: false, message: `Countermeasure protocols fail to engage.` };
+        return { success: false, message: `Haze fails to coalesce.` };
       }
     }
   ],
 
-  // ─── ENGINEER ──────────────────────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════════
+  // ENGINEER
+  // ═══════════════════════════════════════════════════════════════════════════
   engineer: [
     {
-      id: "repairSystem",
-      name: "Repair System",
-      description: "Engineering DC 14 — Restore 1 HP to a damaged system (crit: 2 HP). Also extinguishes fires.",
+      id: "divertPower",
+      name: "Divert Power",
+      description: "Engineering check — Boost one ship system (shields, engines, or weapons).",
       skill: "engineering",
-      dc: 14,
-      requiresTarget: true,
-      targetsFriendly: true,
-      execute: async (state, ship, enemyShip, rollResult, options) => {
-        const sys = ship.systems[options.targetSystem];
-        if (!sys) return { success: false, message: "Invalid system target." };
-        if (sys.hp >= sys.maxHp && !sys.status.includes("fire")) return { success: false, message: `${SYSTEMS[options.targetSystem]?.label} doesn't need repairs.` };
-        if (rollResult.success) {
-          const heal = rollResult.critSuccess ? 2 : 1;
-          const prevHp = sys.hp;
-          sys.hp = Math.min(sys.maxHp, sys.hp + heal);
-          const healed = sys.hp - prevHp;
-
-          // Extinguish fire
-          let fireMsg = "";
-          if (sys.status.includes("fire")) {
-            sys.status = sys.status.filter(s => s !== "fire");
-            fireMsg = " Fire extinguished!";
+      requiresTarget: false,
+      requiresSystemChoice: true,
+      execute: async (ctx) => {
+        const dc = 10 + Math.floor(1.5 * (ctx.ship.shipData.tier ?? 1));
+        const roll = await rollCheck(
+          `1d20 + ${ctx.skillMod}`,
+          `<div class="sc-chat-card"><strong>${ctx.ship.name}</strong> — Divert Power (DC ${dc})</div>`,
+          { alias: ctx.crewName }
+        );
+        if (roll.total >= dc) {
+          const target = ctx.targetedSystem ?? "engines";
+          let msg;
+          switch (target) {
+            case "engines":
+              ctx.ship.shipData.speed += 2;
+              msg = `Power diverted to engines. +2 speed this round.`;
+              break;
+            case "weaponsArray":
+              ctx.mgr.applyModifier(ctx.ship.id, "attackBonus", 2);
+              msg = `Power diverted to weapons. +2 gunnery this round.`;
+              break;
+            case "sensors":
+              ctx.mgr.applyModifier(ctx.ship.id, "sensorBonus", 2);
+              msg = `Power diverted to sensors. +2 to scan checks.`;
+              break;
+            default:
+              // Shields - restore 5% of max per quadrant
+              const shields = ctx.ship.shipData.shields;
+              for (const q of SHIELD_QUADRANTS) {
+                const restore = Math.ceil(shields[q].max * 0.1);
+                shields[q].current = Math.min(shields[q].max, shields[q].current + restore);
+              }
+              msg = `Power diverted to shields. Shield points restored.`;
           }
-
-          return { success: true, message: `${SYSTEMS[options.targetSystem]?.label} repaired for ${healed} HP.${fireMsg}${rollResult.critSuccess ? " (Critical repair!)" : ""}` };
+          ctx.mgr.log.push(`[${ctx.ship.name}] ${msg}`);
+          return { success: true, message: msg };
         }
-        return { success: false, message: `Repair attempt on ${SYSTEMS[options.targetSystem]?.label} fails — damage too extensive.` };
+        return { success: false, message: `Failed to divert power.` };
       }
     },
     {
-      id: "reroutePower",
-      name: "Reroute Power",
-      description: "No check — freely redistribute all reactor power between systems.",
-      skill: null, // no check needed
-      dc: null,
+      id: "patchSystem",
+      name: "Patch System",
+      description: "Engineering check — Reduce a critical damage condition by one step.",
+      skill: "engineering",
+      requiresTarget: false,
+      requiresSystemChoice: true,
+      execute: async (ctx) => {
+        const dc = 15 + Math.floor(1.5 * (ctx.ship.shipData.tier ?? 1));
+        const roll = await rollCheck(
+          `1d20 + ${ctx.skillMod}`,
+          `<div class="sc-chat-card"><strong>${ctx.ship.name}</strong> — Patch System (DC ${dc})</div>`,
+          { alias: ctx.crewName }
+        );
+        if (roll.total >= dc) {
+          const target = ctx.targetedSystem ?? "engines";
+          const crit = ctx.ship.shipData.criticals?.[target];
+          if (!crit || crit === "nominal") return { success: true, message: `${CRITICAL_SYSTEMS[target]?.label} is already nominal.` };
+
+          const order = ["nominal", "glitching", "malfunctioning", "wrecked"];
+          const idx = order.indexOf(crit);
+          const newCond = order[Math.max(0, idx - 1)];
+          ctx.ship.shipData.criticals[target] = newCond;
+          ctx.mgr.log.push(`[${ctx.ship.name}] Patched ${CRITICAL_SYSTEMS[target]?.label}: ${crit} → ${newCond}.`);
+          return { success: true, message: `${CRITICAL_SYSTEMS[target]?.label}: ${crit} → ${newCond}.` };
+        }
+        return { success: false, message: `Patch attempt fails.` };
+      }
+    },
+    {
+      id: "holdItTogether",
+      name: "Hold It Together",
+      description: "Engineering check — Treat one system's crit as one step less severe this round.",
+      skill: "engineering",
+      requiresTarget: false,
+      requiresSystemChoice: true,
+      execute: async (ctx) => {
+        const dc = 15 + Math.floor(1.5 * (ctx.ship.shipData.tier ?? 1));
+        const roll = await rollCheck(
+          `1d20 + ${ctx.skillMod}`,
+          `<div class="sc-chat-card"><strong>${ctx.ship.name}</strong> — Hold It Together (DC ${dc})</div>`,
+          { alias: ctx.crewName }
+        );
+        if (roll.total >= dc) {
+          // Temporarily reduce crit severity (for this round, via modifier)
+          const target = ctx.targetedSystem ?? "engines";
+          ctx.mgr.applyModifier(ctx.ship.id, `critReduce_${target}`, 1);
+          ctx.mgr.log.push(`[${ctx.ship.name}] Holding ${CRITICAL_SYSTEMS[target]?.label} together this round.`);
+          return { success: true, message: `${CRITICAL_SYSTEMS[target]?.label} treated as one step less severe.` };
+        }
+        return { success: false, message: `Can't stabilize the system.` };
+      }
+    },
+    {
+      id: "balanceShields",
+      name: "Balance Shields",
+      description: "Redistribute shield points evenly across all quadrants. No check needed.",
+      skill: null,
       requiresTarget: false,
       autoSuccess: true,
-      isPowerReroute: true,
-      execute: async (state, ship, enemyShip, rollResult, options) => {
-        // Power rerouting is handled by the UI directly — this just confirms the action
-        return { success: true, message: `Power distribution updated. Reactor energy rerouted.` };
-      }
-    },
-    {
-      id: "emergencyPatch",
-      name: "Emergency Patch",
-      description: "Engineering DC 12 — Restore a DISABLED (0 HP) system to 1 HP.",
-      skill: "engineering",
-      dc: 12,
-      requiresTarget: true,
-      targetsFriendly: true,
-      execute: async (state, ship, enemyShip, rollResult, options) => {
-        const sys = ship.systems[options.targetSystem];
-        if (!sys) return { success: false, message: "Invalid system target." };
-        if (sys.hp > 0) return { success: false, message: `${SYSTEMS[options.targetSystem]?.label} is still operational — use Repair instead.` };
-        if (rollResult.success) {
-          sys.hp = 1;
-          return { success: true, message: `Emergency bypass! ${SYSTEMS[options.targetSystem]?.label} patched to 1 HP and back online!` };
+      execute: async (ctx) => {
+        const shields = ctx.ship.shipData.shields;
+        let total = 0;
+        for (const q of SHIELD_QUADRANTS) total += shields[q].current;
+        const per = Math.floor(total / 4);
+        const rem = total % 4;
+        const quads = [...SHIELD_QUADRANTS];
+        for (let i = 0; i < quads.length; i++) {
+          shields[quads[i]].current = per + (i < rem ? 1 : 0);
         }
-        return { success: false, message: `Can't stabilize ${SYSTEMS[options.targetSystem]?.label} — the damage is too severe for a field patch.` };
-      }
-    },
-    {
-      id: "overclock",
-      name: "Overclock",
-      description: "Engineering DC 18 — Double one system's effective power this round. Fail: 1 damage. Crit fail: 2 damage.",
-      skill: "engineering",
-      dc: 18,
-      requiresTarget: true,
-      targetsFriendly: true,
-      execute: async (state, ship, enemyShip, rollResult, options) => {
-        const sys = ship.systems[options.targetSystem];
-        if (!sys || sys.hp <= 0) return { success: false, message: `Cannot overclock a disabled system.` };
-        if (rollResult.critSuccess) {
-          sys.power = sys.power * 2;
-          return { success: true, message: `OVERCLOCK CRITICAL! ${SYSTEMS[options.targetSystem]?.label} running at ${sys.power} power! Incredible efficiency.` };
-        } else if (rollResult.success) {
-          sys.power = sys.power * 2;
-          return { success: true, message: `${SYSTEMS[options.targetSystem]?.label} overclocked to ${sys.power} power! Systems straining but holding.` };
-        } else if (rollResult.critFailure) {
-          sys.hp = Math.max(0, sys.hp - 2);
-          if (sys.hp <= 0) sys.power = 0;
-          return { success: false, message: `⚠ OVERCLOCK BACKFIRE! ${SYSTEMS[options.targetSystem]?.label} takes 2 damage from power surge!${sys.hp <= 0 ? " SYSTEM DISABLED!" : ""}` };
-        } else {
-          sys.hp = Math.max(0, sys.hp - 1);
-          if (sys.hp <= 0) sys.power = 0;
-          return { success: false, message: `Overclock fails — power surge damages ${SYSTEMS[options.targetSystem]?.label} for 1 HP.${sys.hp <= 0 ? " System disabled!" : ""}` };
-        }
+        ctx.mgr.log.push(`[${ctx.ship.name}] Shields balanced: ${per} SP per quadrant.`);
+        await ChatMessage.create({
+          content: `<div class="sc-chat-card"><strong>${ctx.ship.name}</strong> balances shields — <strong>${per} SP</strong> per quadrant.</div>`,
+          speaker: { alias: ctx.crewName }
+        });
+        return { success: true, message: `Shields balanced to ${per} SP each.` };
       }
     }
   ]
 };
 
-
-// ── Roll Helper ─────────────────────────────────────────────────────────────
-
 /**
- * Perform a skill check roll and return a structured result.
- * @param {number} modifier - The skill modifier to add
- * @param {number|null} dc - The DC to beat (null for attack rolls)
- * @param {number} bonusMod - Additional modifiers (system penalties, etc.)
+ * Get all actions for a role.
  */
-export async function performRoll(modifier, dc, bonusMod = 0) {
-  const roll = await new Roll("1d20").evaluate();
-  const natural = roll.total;
-  const total = natural + modifier + bonusMod;
-
-  let success = false;
-  let critSuccess = false;
-  let critFailure = false;
-
-  if (dc !== null) {
-    success = total >= dc;
-    critSuccess = total >= dc + 10 || natural === 20;
-    critFailure = total <= dc - 10 || natural === 1;
-    // Nat 20 bumps success up one degree
-    if (natural === 20 && !critSuccess) { success = true; critSuccess = success; }
-    // Nat 1 bumps down
-    if (natural === 1) { critFailure = true; success = false; critSuccess = false; }
-  } else {
-    // For attack rolls, success is determined by the caller
-    success = true; // placeholder
-  }
-
-  return {
-    roll,
-    naturalRoll: natural,
-    total,
-    modifier,
-    bonusMod,
-    dc,
-    success,
-    critSuccess,
-    critFailure
-  };
-}
-
-
-// ── Chat Message Formatting ─────────────────────────────────────────────────
-
-/**
- * Post a starship combat result to the Foundry chat.
- */
-export async function postCombatMessage(roleName, actionName, result, rollResult) {
-  const successClass = result.success ? "sc-success" : "sc-failure";
-  const rollInfo = rollResult?.roll
-    ? `<div class="sc-roll-info">🎲 ${rollResult.naturalRoll} + ${rollResult.modifier}${rollResult.bonusMod ? ` + ${rollResult.bonusMod}` : ""} = ${rollResult.total}${rollResult.dc ? ` vs DC ${rollResult.dc}` : ""}</div>`
-    : "";
-
-  const critBadge = rollResult?.critSuccess ? `<span class="sc-crit-badge">★ CRIT ★</span>` :
-                    rollResult?.critFailure ? `<span class="sc-critfail-badge">✗ CRIT FAIL</span>` : "";
-
-  const content = `
-    <div class="sc-chat-card ${successClass}">
-      <div class="sc-chat-header">
-        <i class="fas ${ROLES[roleName]?.icon ?? "fa-rocket"}"></i>
-        <strong>${ROLES[roleName]?.label ?? roleName}</strong> — ${actionName}
-        ${critBadge}
-      </div>
-      ${rollInfo}
-      <div class="sc-chat-result">${result.message.replace(/\n/g, "<br>")}</div>
-    </div>
-  `;
-
-  await ChatMessage.create({
-    content,
-    speaker: { alias: "Starship Combat" },
-    flags: { "starship-combat-ftl": { isStarshipCombat: true } }
-  });
+export function getActionsForRole(role) {
+  return ACTIONS[role] ?? [];
 }

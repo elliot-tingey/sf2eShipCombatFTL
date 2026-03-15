@@ -1,24 +1,20 @@
 /* ==========================================================================
-   STARSHIP COMBAT — FTL EDITION
-   Combat UI: Foundry v13 ApplicationV2 with HandlebarsApplicationMixin
+   STARSHIP COMBAT — FTL EDITION v2
+   Combat UI: Multi-ship ApplicationV2 with full action flow
    ========================================================================== */
 
-import {
-  SYSTEMS, SYSTEM_IDS, ROLES, PHASES, WEAPON_TYPES, RANGES, RANGE_LABELS,
-  SHIP_TEMPLATES, createShip, createCombatState, advancePhase, getCurrentPhase,
-  getEffectivePower, getEffectiveMaxPower, getSystemPenalty, getSystemStatusLabel,
-  getUsedPower, getFreePower, setPower, getShipAC, getSensorBonus, applyDamage
-} from "./combat-engine.js";
+import { ROLES, CRITICAL_SYSTEMS, CRIT_CONDITIONS, SHIELD_QUADRANTS, ARCS, WEAPON_TYPES } from "./constants.js";
+import { calcAC, calcTL, getTotalShields, getMaxShields } from "./combat-engine.js";
+import { CombatManager } from "./combat-manager.js";
+import { ACTIONS, getActionsForRole } from "./actions.js";
 
-import { ACTIONS, performRoll, postCombatMessage } from "./actions.js";
-
+const MODULE_ID = "starship-combat-ftl";
 const { HandlebarsApplicationMixin, ApplicationV2 } = foundry.applications.api;
 
 export class StarshipCombatUI extends HandlebarsApplicationMixin(ApplicationV2) {
 
-  // ── Static Configuration ────────────────────────────────────────────────
   static DEFAULT_OPTIONS = {
-    id: "starship-combat-ftl",
+    id: "starship-combat-ftl-ui",
     tag: "section",
     window: {
       title: "Starship Combat — FTL Edition",
@@ -26,72 +22,57 @@ export class StarshipCombatUI extends HandlebarsApplicationMixin(ApplicationV2) 
       resizable: true,
       minimizable: true
     },
-    position: {
-      width: 1120,
-      height: 800
-    },
+    position: { width: 1150, height: 850 },
     classes: ["starship-combat-app"],
     actions: {
-      selectPlayerShip: StarshipCombatUI.#onSelectPlayerShip,
-      selectEnemyShip: StarshipCombatUI.#onSelectEnemyShip,
+      addShip: StarshipCombatUI.#onAddShip,
+      removeShip: StarshipCombatUI.#onRemoveShip,
       assignCrew: StarshipCombatUI.#onAssignCrew,
       startCombat: StarshipCombatUI.#onStartCombat,
-      advancePhase: StarshipCombatUI.#onAdvancePhase,
+      endRound: StarshipCombatUI.#onEndRound,
       endCombat: StarshipCombatUI.#onEndCombat,
+      selectShip: StarshipCombatUI.#onSelectShip,
       selectRole: StarshipCombatUI.#onSelectRole,
+      selectCrew: StarshipCombatUI.#onSelectCrew,
       selectAction: StarshipCombatUI.#onSelectAction,
       executeAction: StarshipCombatUI.#onExecuteAction,
-      adjustPower: StarshipCombatUI.#onAdjustPower,
-      setTarget: StarshipCombatUI.#onSetTarget,
+      skipTurn: StarshipCombatUI.#onSkipTurn,
+      setTargetShip: StarshipCombatUI.#onSetTargetShip,
       setWeapon: StarshipCombatUI.#onSetWeapon,
-      setRange: StarshipCombatUI.#onSetRange,
+      setQuadrant: StarshipCombatUI.#onSetQuadrant,
+      setSubsystem: StarshipCombatUI.#onSetSubsystem,
       setSkillMod: StarshipCombatUI.#onSetSkillMod,
-      clearLog: StarshipCombatUI.#onClearLog,
-      gmDamage: StarshipCombatUI.#onGmDamage,
-      gmEnemyAttack: StarshipCombatUI.#onGmEnemyAttack,
-      noOp: () => {}
+      clearLog: StarshipCombatUI.#onClearLog
     }
   };
 
   static PARTS = {
     combat: {
-      template: "modules/starship-combat-ftl/templates/combat-ui.hbs",
-      scrollable: [".sc-log-entries"]
+      template: `modules/${MODULE_ID}/templates/combat-ui.hbs`,
+      scrollable: [".sc-log-entries", ".sc-ships-scroll"]
     }
   };
 
-  // ── Instance State ──────────────────────────────────────────────────────
-
-  /** @type {object|null} Combat state from combat-engine */
-  combatState = null;
-
-  /** Setup mode selections */
-  setupState = {
-    playerTemplate: null,
-    enemyTemplate: null,
-    crewAssignments: {}
-  };
-
-  /** UI selection state */
+  // ── UI State ────────────────────────────────────────────────────────────
   uiState = {
+    selectedShipId: null,
     selectedRole: "pilot",
-    selectedAction: null,
-    selectedTargetSystem: "weapons",
-    selectedWeaponIndex: 0,
-    selectedRange: "medium",
+    selectedCrewId: null,
+    selectedActionId: null,
+    targetShipId: null,
+    targetQuadrant: "forward",
+    targetedSystem: null,
+    weaponIndex: 0,
     skillMod: 0
   };
 
-  get setupMode() {
-    return !this.combatState || !this.combatState.active;
-  }
-
+  get mgr() { return CombatManager.get(); }
+  get setupMode() { return !this.mgr.active; }
 
   // ── Data Preparation ──────────────────────────────────────────────────
   async _prepareContext(options) {
-    const ctx = {};
-
-    ctx.setupMode = this.setupMode;
+    const mgr = this.mgr;
+    const ctx = { setupMode: this.setupMode };
 
     if (ctx.setupMode) {
       return this.#prepareSetupContext(ctx);
@@ -100,650 +81,369 @@ export class StarshipCombatUI extends HandlebarsApplicationMixin(ApplicationV2) 
   }
 
   #prepareSetupContext(ctx) {
-    // Player ship templates
-    const playerKeys = ["corvette", "frigate", "cruiser"];
-    ctx.playerTemplates = playerKeys.map(id => {
-      const t = SHIP_TEMPLATES[id];
-      return {
-        id, name: t.name,
-        hull: t.hull.max, shield: t.shields.max, reactor: t.reactor.total,
-        selected: this.setupState.playerTemplate === id
-      };
-    });
+    const mgr = this.mgr;
+    ctx.round = 0;
+    ctx.statusText = "Setup — Add ships and assign crew";
+    ctx.canStart = mgr.ships.size >= 2;
 
-    // Enemy ship templates
-    const enemyKeys = ["pirateRaider", "militaryPatrol", "pirateDreadnought", "alienVessel"];
-    ctx.enemyTemplates = enemyKeys.map(id => {
-      const t = SHIP_TEMPLATES[id];
-      return {
-        id, name: t.name,
-        hull: t.hull.max, shield: t.shields.max, reactor: t.reactor.total,
-        selected: this.setupState.enemyTemplate === id
-      };
-    });
+    // All starship actors
+    const allStarships = game.actors?.contents.filter(a => a.type === "starship") ?? [];
+    const addedIds = new Set(mgr.ships.keys());
+    ctx.availableShips = allStarships.map(a => ({
+      id: a.id,
+      name: a.name,
+      img: a.img,
+      disposition: a.system?.disposition ?? "enemy",
+      added: addedIds.has(a.id)
+    }));
 
-    // Crew roles
+    ctx.addedShips = mgr.getAllShips().map(s => ({
+      id: s.id, name: s.name, disposition: s.disposition
+    }));
+
     ctx.crewRoles = Object.entries(ROLES).map(([id, r]) => ({
       id, label: r.label, icon: r.icon
     }));
 
-    // Available actors
-    ctx.actors = game.actors?.contents
+    ctx.pcActors = game.actors?.contents
       .filter(a => a.type === "character" || a.type === "npc")
-      .map(a => ({
-        id: a.id, name: a.name,
-        selected: false
-      })) ?? [];
-
-    ctx.canStart = this.setupState.playerTemplate && this.setupState.enemyTemplate;
-
-    // Placeholder combat info for top bar
-    ctx.round = 0;
-    ctx.phaseName = "Setup";
-    ctx.rangeLabel = "—";
+      .map(a => ({ id: a.id, name: a.name })) ?? [];
 
     return ctx;
   }
 
   #prepareCombatContext(ctx) {
-    const state = this.combatState;
-    const phase = getCurrentPhase(state);
+    const mgr = this.mgr;
+    ctx.round = mgr.round;
+    ctx.statusText = `Round ${mgr.round} — Players take actions in any order`;
 
-    ctx.round = state.round;
-    ctx.phaseName = phase.label;
-    ctx.rangeLabel = RANGE_LABELS[state.range] ?? state.range;
-    ctx.rangeClose = state.range === "close";
-    ctx.rangeMedium = state.range === "medium";
-    ctx.rangeLong = state.range === "long";
-    ctx.enemyScanned = state.enemyScanned;
-    ctx.isGM = game.user.isGM;
+    // Ships
+    ctx.ships = mgr.getAllShips().map(s => {
+      const sd = s.shipData;
+      return {
+        id: s.id,
+        name: s.name,
+        disposition: s.disposition,
+        initiative: s.initiative,
+        hull: { ...sd.hull },
+        hullPercent: Math.max(0, (sd.hull.current / sd.hull.max) * 100),
+        ac: calcAC(sd),
+        tl: calcTL(sd),
+        shieldsTotal: getTotalShields(sd),
+        shieldsMax: getMaxShields(sd),
+        shieldPercent: getMaxShields(sd) > 0 ? (getTotalShields(sd) / getMaxShields(sd) * 100) : 0,
+        destroyed: sd.hull.current <= 0,
+        selected: this.uiState.selectedShipId === s.id
+      };
+    });
 
-    // Player ship
-    ctx.playerShip = this.#prepareShipData(state.playerShip, true);
-    // Enemy ship
-    ctx.enemyShip = this.#prepareShipData(state.enemyShip, false);
+    // Sort by initiative
+    const initOrder = mgr.initiativeOrder;
+    ctx.ships.sort((a, b) => initOrder.indexOf(a.id) - initOrder.indexOf(b.id));
 
-    // Roles tabs
+    // Auto-select first friendly ship if nothing selected
+    if (!this.uiState.selectedShipId) {
+      const friendly = ctx.ships.find(s => s.disposition === "friendly");
+      if (friendly) this.uiState.selectedShipId = friendly.id;
+    }
+
+    // Selected ship detail
+    const selEntry = mgr.getShip(this.uiState.selectedShipId);
+    if (selEntry) {
+      const sd = selEntry.shipData;
+      ctx.selectedShip = {
+        id: selEntry.id,
+        name: selEntry.name,
+        shields: {
+          forward: sd.shields?.forward ?? { current: 0, max: 0 },
+          port: sd.shields?.port ?? { current: 0, max: 0 },
+          starboard: sd.shields?.starboard ?? { current: 0, max: 0 },
+          aft: sd.shields?.aft ?? { current: 0, max: 0 }
+        },
+        criticals: Object.entries(CRITICAL_SYSTEMS).map(([id, def]) => ({
+          id,
+          label: def.label,
+          icon: def.icon,
+          condition: sd.criticals?.[id] ?? "nominal",
+          conditionLabel: CRIT_CONDITIONS[sd.criticals?.[id] ?? "nominal"]?.label ?? "Nominal",
+          severity: CRIT_CONDITIONS[sd.criticals?.[id] ?? "nominal"]?.severity ?? 0
+        })),
+        weapons: (sd.weapons ?? []).map((w, i) => ({
+          ...w, index: i,
+          typeLabel: WEAPON_TYPES[w.type]?.label ?? w.type,
+          arcLabel: ARCS[w.arc]?.label ?? w.arc
+        }))
+      };
+    }
+
+    // Tracking projectiles
+    ctx.trackingProjectiles = mgr.trackingProjectiles.filter(p => p.active).map(p => ({
+      ...p,
+      sourceName: mgr.getShip(p.sourceShipId)?.name ?? "???",
+      targetName: mgr.getShip(p.targetShipId)?.name ?? "???",
+      speedIcon: p.trackingClass === "fast" ? "🚀" : p.trackingClass === "slow" ? "🐢" : "➡️"
+    }));
+
+    // Roles
     ctx.roles = Object.entries(ROLES).map(([id, r]) => ({
       id, label: r.label, icon: r.icon,
-      active: this.uiState.selectedRole === id,
-      acted: state.playerShip.crew[id]?.hasActed ?? false,
-      phaseMatch: r.phase === phase.id || (phase.id === "operations" && (id === "security" || id === "arcnet"))
+      active: this.uiState.selectedRole === id
     }));
+
+    // Current role's crew members
+    const activeShipId = this.#getActiveShipId();
+    ctx.currentRoleCrew = this.#getCrewForCurrentRole(activeShipId);
 
     // Current role's actions
     const role = this.uiState.selectedRole;
-    const roleActions = ACTIONS[role] ?? [];
+    const roleActions = getActionsForRole(role);
     ctx.currentActions = roleActions.map(a => ({
       id: a.id,
       name: a.name,
       description: a.description,
-      shortDesc: a.description.split("—")[1]?.trim() ?? a.description,
-      selected: this.uiState.selectedAction === a.id
+      shortDesc: a.description.split("—")[1]?.trim() ?? a.description.substring(0, 60),
+      selected: this.uiState.selectedActionId === a.id,
+      isFreeAction: a.isFreeAction ?? false
     }));
 
-    // Find selected action definition
-    const selectedDef = roleActions.find(a => a.id === this.uiState.selectedAction);
-
-    // Options visibility
+    // Action options
+    const selectedDef = roleActions.find(a => a.id === this.uiState.selectedActionId);
     ctx.showOptions = !!selectedDef;
-    ctx.showTargetSystem = selectedDef?.requiresTarget ?? false;
-    ctx.showWeaponSelect = selectedDef?.requiresWeapon ?? false;
-    ctx.showRangeSelect = selectedDef?.requiresRange ?? false;
-    ctx.showSkillMod = !!selectedDef && !selectedDef.autoSuccess;
+    ctx.showTargetShip = selectedDef?.requiresTarget ?? false;
+    ctx.showWeapon = selectedDef?.requiresWeapon ?? false;
+    ctx.showQuadrant = (selectedDef?.requiresTarget || selectedDef?.requiresQuadrant) ?? false;
+    ctx.showSubsystem = selectedDef?.requiresTarget && !selectedDef?.targetsFriendly;
+    ctx.showSystemChoice = selectedDef?.requiresSystemChoice ?? false;
     ctx.skillMod = this.uiState.skillMod;
 
-    // Target systems (enemy systems for attacks, player systems for friendly)
-    if (ctx.showTargetSystem) {
-      const targetShip = selectedDef.targetsFriendly ? state.playerShip : state.enemyShip;
-      ctx.targetSystems = SYSTEM_IDS.map(id => ({
-        id,
-        label: SYSTEMS[id].label,
-        hpText: state.enemyScanned || selectedDef.targetsFriendly
-          ? `(${targetShip.systems[id].hp}/${targetShip.systems[id].maxHp})`
-          : "",
-        selected: this.uiState.selectedTargetSystem === id
-      }));
+    // Target options
+    if (ctx.showTargetShip) {
+      const disposition = selectedDef?.targetType ?? "enemy";
+      ctx.targetShips = mgr.getAllShips()
+        .filter(s => s.disposition === disposition && s.shipData.hull.current > 0)
+        .map(s => ({
+          id: s.id, name: s.name,
+          selected: this.uiState.targetShipId === s.id
+        }));
     }
 
     // Weapon options
-    if (ctx.showWeaponSelect) {
-      ctx.weaponOptions = state.playerShip.weapons.map((w, i) => ({
-        index: i,
-        name: w.name,
-        damage: w.damage,
-        typeLabel: WEAPON_TYPES[w.type]?.label ?? w.type,
-        ammoText: w.ammo >= 0 ? ` [${w.ammo} ammo]` : "",
-        selected: this.uiState.selectedWeaponIndex === i
+    if (ctx.showWeapon && selEntry) {
+      const filterType = selectedDef?.isTracking ? "tracking" : null;
+      ctx.weaponOptions = (selEntry.shipData.weapons ?? [])
+        .filter(w => !filterType || w.type === filterType)
+        .map((w, i) => ({
+          index: i, name: w.name, damage: w.damage,
+          typeLabel: WEAPON_TYPES[w.type]?.label ?? w.type,
+          selected: this.uiState.weaponIndex === i
+        }));
+    }
+
+    // Subsystem targeting
+    const targetEntry = mgr.getShip(this.uiState.targetShipId);
+    ctx.canTargetSubsystem = targetEntry ? mgr.isScanned(targetEntry.id) : false;
+    if (ctx.showSubsystem && targetEntry) {
+      ctx.subsystemOptions = Object.entries(CRITICAL_SYSTEMS).map(([id, def]) => ({
+        id, label: def.label,
+        condition: CRIT_CONDITIONS[targetEntry.shipData.criticals?.[id] ?? "nominal"]?.label ?? "Nominal"
+      }));
+    }
+    if (ctx.showSystemChoice && selEntry) {
+      ctx.ownSubsystems = Object.entries(CRITICAL_SYSTEMS).map(([id, def]) => ({
+        id, label: def.label,
+        condition: CRIT_CONDITIONS[selEntry.shipData.criticals?.[id] ?? "nominal"]?.label ?? "Nominal"
       }));
     }
 
-    // Execute button
+    // Execute
     ctx.showExecute = !!selectedDef;
     ctx.selectedActionName = selectedDef?.name ?? "";
-    ctx.roleActed = state.playerShip.crew[role]?.hasActed ?? false;
+    ctx.crewActed = this.uiState.selectedCrewId
+      ? mgr.hasCrewActed(activeShipId, this.uiState.selectedCrewId)
+      : false;
 
     // Log
-    ctx.log = [...state.log].reverse().slice(0, 50);
+    ctx.log = [...mgr.log].reverse().slice(0, 80);
 
     return ctx;
   }
 
-  #prepareShipData(ship, isPlayer) {
-    const data = {
-      name: ship.name,
-      hull: { ...ship.hull },
-      shields: { ...ship.shields },
-      reactor: ship.reactor,
-      hullPercent: Math.max(0, (ship.hull.current / ship.hull.max) * 100),
-      shieldPercent: ship.shields.max > 0 ? Math.max(0, (ship.shields.current / ship.shields.max) * 100) : 0,
-      usedPower: getUsedPower(ship),
-      freePower: getFreePower(ship)
-    };
 
-    // Systems array for template iteration
-    data.systemsArray = SYSTEM_IDS.map(id => {
-      const sys = ship.systems[id];
-      const def = SYSTEMS[id];
-      const effectiveMax = getEffectiveMaxPower(sys);
-      const statusLabel = getSystemStatusLabel(sys);
-      const hpPct = (sys.hp / sys.maxHp) * 100;
+  // ── Helpers ─────────────────────────────────────────────────────────────
 
-      // Build power pips
-      const pips = [];
-      for (let i = 1; i <= sys.maxPower; i++) {
-        pips.push({
-          level: i,
-          filled: i <= sys.power,
-          overMax: i > effectiveMax
-        });
-      }
+  #getActiveShipId() {
+    // The first friendly ship is the "player ship"
+    const friendly = this.mgr.getAllShips().find(s => s.disposition === "friendly");
+    return friendly?.id ?? this.uiState.selectedShipId;
+  }
 
-      // Status icons
-      const statusIcons = [];
-      if (sys.status.includes("fire")) statusIcons.push("🔥");
-      if (sys.status.includes("breach")) statusIcons.push("💨");
-      if (sys.status.includes("boarded")) statusIcons.push("⚔");
-      if (sys.status.includes("ionized")) statusIcons.push("⚡");
-
-      // Status CSS class
-      let statusClass = "sc-sys-online";
-      if (sys.hp <= 0) statusClass = "sc-sys-disabled";
-      else if (hpPct <= 25) statusClass = "sc-sys-critical";
-      else if (hpPct <= 50) statusClass = "sc-sys-damaged";
-      else if (hpPct <= 75) statusClass = "sc-sys-stressed";
-
+  #getCrewForCurrentRole(shipId) {
+    if (!shipId) return [];
+    const crewIds = this.mgr.getCrewForRole(shipId, this.uiState.selectedRole);
+    return crewIds.map(id => {
+      const actor = game.actors.get(id);
       return {
-        id, ...def, hp: sys.hp, maxHp: sys.maxHp,
-        power: sys.power, maxPower: sys.maxPower,
-        effectiveMax, statusLabel, statusClass,
-        hpPercent: hpPct, pips, statusIcons
+        id,
+        name: actor?.name ?? "Unknown",
+        acted: this.mgr.hasCrewActed(shipId, id),
+        selected: this.uiState.selectedCrewId === id
       };
     });
-
-    // Weapons
-    data.weapons = (ship.weapons ?? []).map(w => {
-      const typeColor = w.type === "laser" ? "#22d3ee" : w.type === "missile" ? "#f97316" : "#a3a3a3";
-      return {
-        ...w,
-        typeLabel: WEAPON_TYPES[w.type]?.label ?? w.type,
-        typeColor,
-        hasAmmo: w.ammo >= 0,
-        ammoText: w.ammo >= 0 ? ` [${w.ammo}]` : ""
-      };
-    });
-
-    return data;
   }
 
 
   // ── Action Handlers ─────────────────────────────────────────────────────
 
-  static #onSelectPlayerShip(event, target) {
-    this.setupState.playerTemplate = target.dataset.template;
-    this.render({force: true});
+  static #onAddShip(event, target) {
+    const actorId = target.dataset.actorId;
+    const actor = game.actors.get(actorId);
+    const disposition = actor?.system?.disposition ?? "enemy";
+    this.mgr.addShip(actorId, disposition);
+    this.render({ force: true });
   }
 
-  static #onSelectEnemyShip(event, target) {
-    this.setupState.enemyTemplate = target.dataset.template;
-    this.render({force: true});
+  static #onRemoveShip(event, target) {
+    this.mgr.removeShip(target.dataset.actorId);
+    this.render({ force: true });
   }
 
   static #onAssignCrew(event, target) {
+    const shipId = target.dataset.shipId;
     const role = target.dataset.role;
-    const actorId = target.value || null;
-    this.setupState.crewAssignments[role] = actorId;
+    const crewId = target.value;
+    if (crewId) this.mgr.assignCrew(shipId, role, crewId);
   }
 
-  static #onStartCombat(event, target) {
-    const pTemplate = SHIP_TEMPLATES[this.setupState.playerTemplate];
-    const eTemplate = SHIP_TEMPLATES[this.setupState.enemyTemplate];
-    if (!pTemplate || !eTemplate) {
-      ui.notifications.warn("Select both a player ship and an enemy ship.");
-      return;
-    }
-
-    this.combatState = createCombatState(pTemplate, eTemplate);
-
-    // Apply crew assignments
-    for (const [role, actorId] of Object.entries(this.setupState.crewAssignments)) {
-      if (actorId && this.combatState.playerShip.crew[role]) {
-        this.combatState.playerShip.crew[role].actorId = actorId;
-      }
-    }
-
-    this.combatState.log.push("═══ COMBAT INITIATED ═══");
-    this.combatState.log.push(`${this.combatState.playerShip.name} vs ${this.combatState.enemyShip.name}`);
-    this.combatState.log.push(`Range: ${RANGE_LABELS[this.combatState.range]} — Round 1 begins.`);
-
-    this.uiState.selectedRole = "engineer";
-    this.uiState.selectedAction = null;
-
-    this.render({force: true});
-
-    // Post to chat
-    ChatMessage.create({
-      content: `<div class="sc-chat-card sc-announce"><i class="fas fa-rocket"></i> <strong>Starship Combat Initiated!</strong><br>${this.combatState.playerShip.name} vs ${this.combatState.enemyShip.name}</div>`,
-      speaker: { alias: "Starship Combat" }
-    });
+  static async #onStartCombat() {
+    const success = await this.mgr.startCombat();
+    if (success) this.render({ force: true });
   }
 
-  static #onAdvancePhase(event, target) {
-    if (!this.combatState) return;
-
-    const phase = advancePhase(this.combatState);
-    this.combatState.log.push(`── ${phase.label} ──`);
-
-    // Auto-select the relevant role tab
-    if (phase.role) {
-      this.uiState.selectedRole = phase.role;
-    } else if (phase.id === "operations") {
-      this.uiState.selectedRole = "security";
-    }
-    this.uiState.selectedAction = null;
-
-    // Check for ship destruction
-    if (this.combatState.playerShip.hull.current <= 0) {
-      this.combatState.log.push("💀 YOUR SHIP HAS BEEN DESTROYED!");
-      this.combatState.active = false;
-    }
-    if (this.combatState.enemyShip.hull.current <= 0) {
-      this.combatState.log.push("🎉 ENEMY SHIP DESTROYED! VICTORY!");
-      this.combatState.active = false;
-    }
-
-    this.render({force: true});
+  static async #onEndRound() {
+    await this.mgr.endRound();
+    this.render({ force: true });
   }
 
-  static async #onEndCombat(event, target) {
-    // Use standard Dialog for maximum compatibility
+  static async #onEndCombat() {
     const confirmed = await new Promise(resolve => {
       new Dialog({
         title: "End Starship Combat",
-        content: "<p>Are you sure you want to end this combat encounter?</p>",
+        content: "<p>End this combat encounter?</p>",
         buttons: {
-          yes: { icon: '<i class="fas fa-check"></i>', label: "End Combat", callback: () => resolve(true) },
+          yes: { icon: '<i class="fas fa-check"></i>', label: "End", callback: () => resolve(true) },
           no: { icon: '<i class="fas fa-times"></i>', label: "Cancel", callback: () => resolve(false) }
         },
-        default: "no",
-        close: () => resolve(false)
+        default: "no", close: () => resolve(false)
       }).render(true);
     });
     if (confirmed) {
-      this.combatState = null;
-      this.setupState = { playerTemplate: null, enemyTemplate: null, crewAssignments: {} };
-      this.uiState = { selectedRole: "pilot", selectedAction: null, selectedTargetSystem: "weapons", selectedWeaponIndex: 0, selectedRange: "medium", skillMod: 0 };
-      this.render({force: true});
+      await this.mgr.endCombat();
+      this.mgr.reset();
+      this.uiState = { selectedShipId: null, selectedRole: "pilot", selectedCrewId: null, selectedActionId: null, targetShipId: null, targetQuadrant: "forward", targetedSystem: null, weaponIndex: 0, skillMod: 0 };
+      this.render({ force: true });
     }
+  }
+
+  static #onSelectShip(event, target) {
+    this.uiState.selectedShipId = target.dataset.shipId;
+    this.render({ force: true });
   }
 
   static #onSelectRole(event, target) {
     this.uiState.selectedRole = target.dataset.role;
-    this.uiState.selectedAction = null;
-    this.render({force: true});
+    this.uiState.selectedActionId = null;
+    this.render({ force: true });
+  }
+
+  static #onSelectCrew(event, target) {
+    this.uiState.selectedCrewId = target.value || null;
   }
 
   static #onSelectAction(event, target) {
-    const actionId = target.dataset.actionId;
-    this.uiState.selectedAction = this.uiState.selectedAction === actionId ? null : actionId;
-    this.render({force: true});
+    const id = target.dataset.actionId;
+    this.uiState.selectedActionId = this.uiState.selectedActionId === id ? null : id;
+    this.render({ force: true });
   }
 
-  static #onSetTarget(event, target) {
-    this.uiState.selectedTargetSystem = target.value;
+  static #onSetTargetShip(event, target) { this.uiState.targetShipId = target.value; }
+  static #onSetWeapon(event, target) { this.uiState.weaponIndex = parseInt(target.value) || 0; }
+  static #onSetQuadrant(event, target) { this.uiState.targetQuadrant = target.value; }
+  static #onSetSubsystem(event, target) { this.uiState.targetedSystem = target.value || null; }
+  static #onSetSkillMod(event, target) { this.uiState.skillMod = parseInt(target.value) || 0; }
+  static #onClearLog() { this.mgr.log = []; this.render({ force: true }); }
+
+  static #onSkipTurn() {
+    const shipId = this.#getActiveShipId();
+    const crewId = this.uiState.selectedCrewId;
+    if (shipId && crewId) {
+      this.mgr.skipCrewTurn(shipId, crewId);
+      this.uiState.selectedCrewId = null;
+      this.render({ force: true });
+    } else {
+      ui.notifications.warn("Select a crew member to skip.");
+    }
   }
 
-  static #onSetWeapon(event, target) {
-    this.uiState.selectedWeaponIndex = parseInt(target.value) || 0;
-  }
-
-  static #onSetRange(event, target) {
-    this.uiState.selectedRange = target.value;
-  }
-
-  static #onSetSkillMod(event, target) {
-    this.uiState.skillMod = parseInt(target.value) || 0;
-  }
-
-  static #onClearLog(event, target) {
-    if (this.combatState) this.combatState.log = [];
-    this.render({force: true});
-  }
-
-  static #onAdjustPower(event, target) {
-    if (!this.combatState) return;
-    const shipKey = target.dataset.ship;
-    const sysId = target.dataset.system;
-    const level = parseInt(target.dataset.level);
-
-    const ship = shipKey === "enemy" ? this.combatState.enemyShip : this.combatState.playerShip;
-    if (shipKey === "enemy" && !game.user.isGM) return; // only GM can adjust enemy power
-
-    const sys = ship.systems[sysId];
-    if (!sys) return;
-
-    // Toggle: if clicking the current power level, reduce by 1. Otherwise set to clicked level.
-    const newPower = sys.power === level ? level - 1 : level;
-    setPower(ship, sysId, newPower);
-    this.render({force: true});
-  }
-
-  static async #onExecuteAction(event, target) {
-    if (!this.combatState) return;
-    const state = this.combatState;
+  static async #onExecuteAction() {
+    const mgr = this.mgr;
     const role = this.uiState.selectedRole;
-    const actionId = this.uiState.selectedAction;
+    const actionId = this.uiState.selectedActionId;
+    const crewId = this.uiState.selectedCrewId;
+    const shipId = this.#getActiveShipId();
 
-    if (!actionId) {
-      ui.notifications.warn("Select an action first.");
-      return;
-    }
+    if (!actionId) return ui.notifications.warn("Select an action.");
 
-    // Check if role already acted
-    if (state.playerShip.crew[role]?.hasActed) {
-      ui.notifications.warn(`${ROLES[role].label} has already acted this round.`);
-      return;
-    }
-
-    // Find action definition
-    const actionDef = ACTIONS[role]?.find(a => a.id === actionId);
+    const actionDef = getActionsForRole(role).find(a => a.id === actionId);
     if (!actionDef) return;
 
-    // Check close range requirement
-    if (actionDef.requiresCloseRange && state.range !== "close") {
-      ui.notifications.warn("This action requires Close range!");
-      return;
+    // For non-free actions, require a crew member
+    if (!actionDef.isFreeAction && !actionDef.autoSuccess) {
+      if (!crewId) return ui.notifications.warn("Select a crew member.");
+      if (mgr.hasCrewActed(shipId, crewId)) return ui.notifications.warn("This crew member has already acted.");
     }
 
-    // Check weapon system has power for gunner actions
-    if (role === "gunner" && getEffectivePower(state.playerShip.systems.weapons) <= 0) {
-      ui.notifications.warn("Weapons system has no power!");
-      return;
-    }
+    const ship = mgr.getShip(shipId);
+    const targetShip = mgr.getShip(this.uiState.targetShipId);
+    const crewActor = crewId ? game.actors.get(crewId) : null;
+    const weapon = ship?.shipData.weapons?.[this.uiState.weaponIndex];
 
-    // Perform roll (if needed)
-    let rollResult = null;
-    if (actionDef.skill && !actionDef.autoSuccess) {
-      const allPenalty = state.playerShip.modifiers.allPenalty ?? 0;
-      const sysPenalty = actionDef.skill === "gunnery"
-        ? getSystemPenalty(state.playerShip.systems.weapons)
-        : 0;
-
-      rollResult = await performRoll(
-        this.uiState.skillMod,
-        actionDef.dc,
-        allPenalty + sysPenalty
-      );
-    } else if (actionDef.autoSuccess) {
-      rollResult = { success: true, critSuccess: false, critFailure: false, naturalRoll: 0, total: 0, modifier: 0, dc: null };
-    } else {
-      // Attack rolls (gunner without set DC)
-      rollResult = await performRoll(this.uiState.skillMod, null, 0);
-    }
-
-    // Build options
-    const options = {
-      targetSystem: this.uiState.selectedTargetSystem,
-      weaponIndex: this.uiState.selectedWeaponIndex,
-      targetRange: this.uiState.selectedRange,
-      skillMod: this.uiState.skillMod
+    // Build context
+    const ctx = {
+      mgr,
+      ship,
+      targetShip,
+      crewName: crewActor?.name ?? ship?.name ?? "Unknown",
+      crewActor,
+      skillMod: this.uiState.skillMod,
+      weapon,
+      targetQuadrant: this.uiState.targetQuadrant,
+      targetedSystem: this.uiState.targetedSystem,
+      isTargetingSubsystem: !!this.uiState.targetedSystem
     };
 
-    // Execute the action
-    const result = await actionDef.execute(state, state.playerShip, state.enemyShip, rollResult, options);
+    // Execute
+    const result = await actionDef.execute(ctx);
 
-    // Mark as acted
-    state.playerShip.crew[role].hasActed = true;
-
-    // Log
-    state.log.push(`[${ROLES[role].label}] ${actionDef.name}: ${result.message}`);
-
-    // Post to chat
-    await postCombatMessage(role, actionDef.name, result, rollResult);
-
-    // Check destruction
-    if (state.enemyShip.hull.current <= 0) {
-      state.log.push("🎉 ENEMY SHIP DESTROYED! VICTORY!");
-      state.active = false;
-      ChatMessage.create({
-        content: `<div class="sc-chat-card sc-victory"><i class="fas fa-trophy"></i> <strong>VICTORY!</strong> The ${state.enemyShip.name} has been destroyed!</div>`,
-        speaker: { alias: "Starship Combat" }
-      });
-    }
-    if (state.playerShip.hull.current <= 0) {
-      state.log.push("💀 YOUR SHIP HAS BEEN DESTROYED!");
-      state.active = false;
-      ChatMessage.create({
-        content: `<div class="sc-chat-card sc-defeat"><i class="fas fa-skull"></i> <strong>DEFEAT!</strong> Your ship has been destroyed!</div>`,
-        speaker: { alias: "Starship Combat" }
-      });
+    // Mark acted (unless free action)
+    if (!actionDef.isFreeAction && crewId) {
+      mgr.markCrewActed(shipId, crewId);
     }
 
-    this.uiState.selectedAction = null;
-    this.render({force: true});
+    this.uiState.selectedActionId = null;
+    this.render({ force: true });
   }
 
 
-  // ── GM Tools ──────────────────────────────────────────────────────────────
-
-  static async #onGmDamage(event, target) {
-    if (!this.combatState || !game.user.isGM) return;
-
-    const systemOptions = SYSTEM_IDS.map(id => `<option value="${id}">${SYSTEMS[id].label}</option>`).join("");
-
-    const content = `
-      <form class="sc-gm-form">
-        <div class="form-group"><label>Target</label>
-          <select name="target"><option value="player">Player Ship</option><option value="enemy">Enemy Ship</option></select>
-        </div>
-        <div class="form-group"><label>Target System</label>
-          <select name="system">${systemOptions}</select>
-        </div>
-        <div class="form-group"><label>Damage</label>
-          <input type="text" name="formula" value="2d6" placeholder="e.g. 3d6+4" />
-        </div>
-        <div class="form-group"><label>Type</label>
-          <select name="weaponType">
-            <option value="kinetic">Kinetic</option><option value="laser">Laser</option><option value="missile">Missile</option>
-          </select>
-        </div>
-        <div class="form-group"><label>Critical?</label>
-          <input type="checkbox" name="isCrit" />
-        </div>
-      </form>
-    `;
-
-    const app = this;
-    new Dialog({
-      title: "GM: Apply Damage",
-      content,
-      buttons: {
-        apply: {
-          icon: '<i class="fas fa-burst"></i>',
-          label: "Apply Damage",
-          callback: async (html) => {
-            const form = html.find("form")[0] ?? html[0]?.querySelector("form");
-            if (!form) return;
-            const targetShip = form.target.value === "enemy" ? app.combatState.enemyShip : app.combatState.playerShip;
-            const targetLabel = form.target.value === "enemy" ? app.combatState.enemyShip.name : app.combatState.playerShip.name;
-            const sysId = form.system.value;
-            const formula = form.formula.value || "2d6";
-            const weaponType = form.weaponType.value;
-            const isCrit = form.isCrit.checked;
-
-            try {
-              const roll = await new Roll(formula).evaluate();
-              const report = applyDamage(targetShip, roll.total, sysId, weaponType, isCrit);
-
-              let msg = `[GM] ${roll.total} ${weaponType} damage to ${targetLabel}'s ${SYSTEMS[sysId]?.label}`;
-              if (report.shieldAbsorbed > 0) msg += ` (${report.shieldAbsorbed} shields absorbed)`;
-              if (report.systemDamage > 0) msg += ` — ${report.systemDamage} system dmg`;
-              if (report.hullDamage > 0) msg += `, ${report.hullDamage} hull dmg`;
-              if (report.systemDestroyed) msg += ` ⚠ SYSTEM DISABLED`;
-              if (report.shipDestroyed) msg += ` 💀 SHIP DESTROYED`;
-
-              app.combatState.log.push(msg);
-
-              await ChatMessage.create({
-                content: `<div class="sc-chat-card"><div class="sc-chat-header"><i class="fas fa-gavel"></i> <strong>GM Damage</strong></div><div class="sc-chat-result">${msg}</div></div>`,
-                speaker: { alias: "Starship Combat" }
-              });
-
-              if (targetShip.hull.current <= 0) {
-                app.combatState.active = false;
-              }
-
-              app.render({force: true});
-            } catch (e) {
-              ui.notifications.error(`Invalid roll formula: ${formula}`);
-            }
-          }
-        },
-        cancel: { icon: '<i class="fas fa-times"></i>', label: "Cancel" }
-      },
-      default: "apply"
-    }).render(true);
-  }
-
-  static async #onGmEnemyAttack(event, target) {
-    if (!this.combatState || !game.user.isGM) return;
-    const state = this.combatState;
-    const enemy = state.enemyShip;
-    const player = state.playerShip;
-
-    if (enemy.weapons.length === 0) {
-      ui.notifications.warn("Enemy has no weapons.");
-      return;
-    }
-
-    const weaponOptions = enemy.weapons.map((w, i) =>
-      `<option value="${i}">${w.name} (${w.damage} ${WEAPON_TYPES[w.type]?.label ?? w.type})${w.ammo >= 0 ? ` [${w.ammo} ammo]` : ""}</option>`
-    ).join("");
-    const systemOptions = SYSTEM_IDS.map(id => `<option value="${id}">${SYSTEMS[id].label}</option>`).join("");
-
-    const content = `
-      <form class="sc-gm-form">
-        <div class="form-group"><label>Weapon</label><select name="weapon">${weaponOptions}</select></div>
-        <div class="form-group"><label>Target System</label><select name="system">${systemOptions}</select></div>
-        <div class="form-group"><label>Attack Modifier</label><input type="number" name="atkMod" value="0" /></div>
-      </form>
-    `;
-
-    const app = this;
-    new Dialog({
-      title: "GM: Enemy Attack",
-      content,
-      buttons: {
-        fire: {
-          icon: '<i class="fas fa-crosshairs"></i>',
-          label: "Fire!",
-          callback: async (html) => {
-            const form = html.find("form")[0] ?? html[0]?.querySelector("form");
-            if (!form) return;
-            const weaponIdx = parseInt(form.weapon.value);
-            const sysId = form.system.value;
-            const atkMod = parseInt(form.atkMod.value) || 0;
-            const weapon = enemy.weapons[weaponIdx];
-            if (!weapon) return;
-
-            if (weapon.ammo === 0) {
-              ui.notifications.warn(`${weapon.name} is out of ammo!`);
-              return;
-            }
-            if (weapon.ammo > 0) weapon.ammo--;
-
-            const targetAC = getShipAC(player);
-            const attackRoll = await new Roll("1d20").evaluate();
-            const rangeBonus = WEAPON_TYPES[weapon.type]?.rangeBonus?.[state.range] ?? 0;
-            const total = attackRoll.total + atkMod + rangeBonus;
-            const hit = total >= targetAC;
-            const crit = total >= targetAC + 10;
-
-            if (hit) {
-              const dmgRoll = await new Roll(weapon.damage).evaluate();
-              let totalDmg = dmgRoll.total;
-              if (crit) totalDmg = Math.round(totalDmg * 1.5);
-
-              const report = applyDamage(player, totalDmg, sysId, weapon.type, crit);
-
-              let msg = `${enemy.name} fires ${weapon.name} at your ${SYSTEMS[sysId]?.label} — HIT! `;
-              msg += `${totalDmg} damage (rolled ${attackRoll.total}+${atkMod} = ${total} vs AC ${targetAC})`;
-              if (report.shieldAbsorbed > 0) msg += `. Shields absorbed ${report.shieldAbsorbed}`;
-              if (report.systemDamage > 0) msg += `. System takes ${report.systemDamage}`;
-              if (report.hullDamage > 0) msg += `. Hull takes ${report.hullDamage}`;
-              if (crit) msg += ` ★ CRITICAL HIT ★`;
-              if (report.fire) msg += ` 🔥 Fire!`;
-              if (report.systemDestroyed) msg += ` ⚠ ${SYSTEMS[sysId]?.label} DISABLED!`;
-              if (report.shipDestroyed) msg += ` 💀 SHIP DESTROYED!`;
-
-              state.log.push(`[ENEMY] ${msg}`);
-              await ChatMessage.create({
-                content: `<div class="sc-chat-card sc-failure"><div class="sc-chat-header"><i class="fas fa-skull-crossbones"></i> <strong>Enemy Attack</strong></div><div class="sc-roll-info">🎲 ${attackRoll.total} + ${atkMod} = ${total} vs AC ${targetAC}</div><div class="sc-chat-result">${msg}</div></div>`,
-                speaker: { alias: state.enemyShip.name }
-              });
-
-              if (player.hull.current <= 0) {
-                state.log.push("💀 YOUR SHIP HAS BEEN DESTROYED!");
-                state.active = false;
-              }
-            } else {
-              const msg = `${enemy.name} fires ${weapon.name} at your ${SYSTEMS[sysId]?.label} — MISS! (${total} vs AC ${targetAC})`;
-              state.log.push(`[ENEMY] ${msg}`);
-              await ChatMessage.create({
-                content: `<div class="sc-chat-card"><div class="sc-chat-header"><i class="fas fa-skull-crossbones"></i> <strong>Enemy Attack</strong></div><div class="sc-roll-info">🎲 ${attackRoll.total} + ${atkMod} = ${total} vs AC ${targetAC}</div><div class="sc-chat-result">${msg}</div></div>`,
-                speaker: { alias: state.enemyShip.name }
-              });
-            }
-
-            app.render({force: true});
-          }
-        },
-        cancel: { icon: '<i class="fas fa-times"></i>', label: "Cancel" }
-      },
-      default: "fire"
-    }).render(true);
-  }
-
+  // ── Render Hook ─────────────────────────────────────────────────────────
   _onRender(context, options) {
-    // Auto-scroll combat log to bottom
     const logEl = this.element.querySelector(".sc-log-entries");
     if (logEl) logEl.scrollTop = logEl.scrollHeight;
 
-    // Wire up select elements that use 'change' events (data-action on selects)
-    this.element.querySelectorAll("select[data-action]").forEach(sel => {
-      sel.addEventListener("change", (e) => {
-        const actionName = sel.dataset.action;
-        const handler = StarshipCombatUI.DEFAULT_OPTIONS.actions[actionName];
-        if (handler) handler.call(this, e, sel);
-      });
-    });
-
-    // Wire up number inputs
-    this.element.querySelectorAll("input[data-action]").forEach(inp => {
-      inp.addEventListener("change", (e) => {
-        const actionName = inp.dataset.action;
-        const handler = StarshipCombatUI.DEFAULT_OPTIONS.actions[actionName];
-        if (handler) handler.call(this, e, inp);
+    // Wire change events for selects/inputs
+    this.element.querySelectorAll("select[data-action], input[data-action]").forEach(el => {
+      el.addEventListener("change", (e) => {
+        const handler = StarshipCombatUI.DEFAULT_OPTIONS.actions[el.dataset.action];
+        if (handler) handler.call(this, e, el);
       });
     });
   }
