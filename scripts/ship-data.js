@@ -1,9 +1,9 @@
 /* ==========================================================================
-   STARSHIP COMBAT — FTL EDITION v3
-   Ship Data: Flag-based storage, defaults, derived stats, crew persistence
+   STARSHIP COMBAT — FTL EDITION v3.1
+   Ship Data
    ========================================================================== */
 
-import { MODULE_ID, FLAG_KEY, IS_SHIP_FLAG, SIZE_CATEGORIES, MANEUVERABILITY, SUBSYSTEM_TYPES, DAMAGE_CONDITIONS, BASE_FRAMES, ROLES, WEAPON_CATALOG } from "./constants.js";
+import { MODULE_ID, FLAG_KEY, IS_SHIP_FLAG, SIZE_CATEGORIES, MANEUVERABILITY, SUBSYSTEM_TYPES, DAMAGE_CONDITIONS, BASE_FRAMES, ROLES, WEAPON_CATALOG, MOUNT_BULK, AMMO_CATEGORIES } from "./constants.js";
 
 // ── Flag Access ─────────────────────────────────────────────────────────────
 
@@ -17,7 +17,6 @@ export function getShipData(actor) {
 }
 
 export async function setShipData(actor, data) {
-  // Foundry flag merge can cause issues with arrays/objects — unset first then set
   await actor.unsetFlag(MODULE_ID, FLAG_KEY);
   await actor.setFlag(MODULE_ID, FLAG_KEY, data);
 }
@@ -33,32 +32,21 @@ export function buildDefaultShipData(name = "New Starship") {
     maneuverability: "average",
     speed: 8,
     turnDistance: 2,
-
-    // Hull — single pool
     hull: { current: 55, max: 55 },
     hpIncrement: 10,
     dt: 0,
     ct: 11,
-
-    // Shields — single global pool, no quadrants
     shields: { current: 40, max: 40 },
-
-    // Defense stats
     armorBonus: 2,
     armorTlPenalty: 0,
     countermeasuresBonus: 1,
     pilotRanks: 5,
-
-    // Computer
     computerBonus: 1,
     computerNodes: 1,
-    computerNpcId: null, // Actor ID of the ship's computer NPC
-
-    // Sensors
+    computerNpcId: null,
     sensorMod: 0,
     sensorRange: "medium",
-
-    // Subsystems — array of objects, can have multiples of any type
+    cargoCapacity: 20,
     subsystems: [
       { id: foundry.utils.randomID(), type: "lifeSupport",  name: "Life Support",  condition: "nominal", notes: "" },
       { id: foundry.utils.randomID(), type: "sensors",      name: "Sensors",       condition: "nominal", notes: "" },
@@ -66,24 +54,13 @@ export function buildDefaultShipData(name = "New Starship") {
       { id: foundry.utils.randomID(), type: "engines",       name: "Engines",       condition: "nominal", notes: "" },
       { id: foundry.utils.randomID(), type: "powerCore",     name: "Power Core",    condition: "nominal", notes: "" }
     ],
-
-    // Weapons — array of weapon objects
     weapons: [],
-
-    // Round modifiers (reset each round)
     modifiers: {},
-
-    // Disposition
     disposition: "friendly",
-
-    // Crew memory — remembers last assigned crew per role
-    crewMemory: {}, // { pilot: ["actorId1"], gunner: ["actorId1", "actorId2"], ... }
-
-    // Notes
+    crewMemory: {},
     notes: ""
   };
 }
-
 
 // ── Derived Stats ───────────────────────────────────────────────────────────
 
@@ -104,35 +81,21 @@ export function getDerived(data) {
     tl: calcTL(data),
     hullPercent: data.hull.max > 0 ? (data.hull.current / data.hull.max * 100) : 0,
     shieldPercent: data.shields.max > 0 ? (data.shields.current / data.shields.max * 100) : 0,
-    isDestroyed: data.hull.current <= 0
+    isDestroyed: data.hull.current <= 0,
+    cargoCapacity: data.cargoCapacity ?? 20
   };
 }
-
 
 // ── Subsystem Management ────────────────────────────────────────────────────
 
 export function addSubsystem(data, type, name = "", notes = "") {
   const typeDef = SUBSYSTEM_TYPES[type];
-  if (!typeDef) return;
-  if (!name) name = typeDef.label;
-  data.subsystems.push({
-    id: foundry.utils.randomID(),
-    type,
-    name,
-    condition: "nominal",
-    notes
-  });
+  if (!name) name = typeDef?.label ?? "Unknown";
+  data.subsystems.push({ id: foundry.utils.randomID(), type, name, condition: "nominal", notes });
 }
 
 export function removeSubsystem(data, subsystemId) {
   data.subsystems = data.subsystems.filter(s => s.id !== subsystemId);
-}
-
-export function setSubsystemCondition(data, subsystemId, condition) {
-  const sub = data.subsystems.find(s => s.id === subsystemId);
-  if (sub && DAMAGE_CONDITIONS[condition]) {
-    sub.condition = condition;
-  }
 }
 
 export function escalateSubsystem(data, subsystemId) {
@@ -144,30 +107,15 @@ export function escalateSubsystem(data, subsystemId) {
   return sub.condition;
 }
 
-export function repairSubsystem(data, subsystemId) {
-  const sub = data.subsystems.find(s => s.id === subsystemId);
-  if (!sub) return null;
-  const order = ["nominal", "glitching", "malfunctioning", "wrecked"];
-  const idx = order.indexOf(sub.condition);
-  sub.condition = order[Math.max(idx - 1, 0)];
-  return sub.condition;
-}
-
-
 // ── Weapon Management ───────────────────────────────────────────────────────
 
 export function addWeapon(data, weaponTemplate) {
-  data.weapons.push({
-    id: foundry.utils.randomID(),
-    ...foundry.utils.deepClone(weaponTemplate),
-    arc: weaponTemplate.arc ?? "forward"
-  });
+  data.weapons.push({ id: foundry.utils.randomID(), ...foundry.utils.deepClone(weaponTemplate), arc: weaponTemplate.arc ?? "forward" });
 }
 
 export function removeWeapon(data, weaponId) {
   data.weapons = data.weapons.filter(w => w.id !== weaponId);
 }
-
 
 // ── Crew Memory ─────────────────────────────────────────────────────────────
 
@@ -177,112 +125,75 @@ export function saveCrewMemory(data, role, actorIds) {
 }
 
 export function getCrewMemory(data, role) {
-  const ids = data.crewMemory?.[role] ?? [];
-  // Validate that actors still exist
-  return ids.filter(id => game.actors.get(id));
+  return (data.crewMemory?.[role] ?? []).filter(id => game.actors.get(id));
 }
 
+// ── Damage ──────────────────────────────────────────────────────────────────
 
-// ── Damage Application (simplified — no quadrants) ──────────────────────────
-
-/**
- * Apply damage to a ship. Shields absorb first (unless missile bypasses).
- * Returns a damage report.
- */
 export function applyDamage(data, rawDamage, { bypassShields = false, targetSubsystemId = null } = {}) {
-  const report = {
-    rawDamage,
-    shieldAbsorbed: 0,
-    hullDamage: 0,
-    belowDT: false,
-    critTriggered: false,
-    critSubsystem: null,
-    subsystemHit: null,
-    shipDestroyed: false
-  };
-
+  const report = { rawDamage, shieldAbsorbed: 0, hullDamage: 0, belowDT: false, critTriggered: false, critSubsystem: null, subsystemHit: null, shipDestroyed: false };
   let damage = rawDamage;
-
-  // Shields absorb (unless bypassed, e.g., targeted missiles)
   if (!bypassShields && data.shields.current > 0) {
     const absorbed = Math.min(data.shields.current, damage);
     data.shields.current -= absorbed;
     report.shieldAbsorbed = absorbed;
     damage -= absorbed;
   }
-
-  // Damage threshold
-  if (damage > 0 && data.dt > 0 && damage < data.dt) {
-    report.belowDT = true;
-    return report;
-  }
-
-  // Hull damage
+  if (damage > 0 && data.dt > 0 && damage < data.dt) { report.belowDT = true; return report; }
   if (damage > 0) {
     const prevHull = data.hull.current;
     data.hull.current = Math.max(0, data.hull.current - damage);
     report.hullDamage = prevHull - data.hull.current;
-
-    if (data.hull.current <= 0) {
-      report.shipDestroyed = true;
-      return report;
-    }
-
-    // Critical threshold check
-    const totalDmgTaken = data.hull.max - data.hull.current;
-    const prevDmgTaken = data.hull.max - prevHull;
-    if (data.ct > 0) {
-      const prevCrits = Math.floor(prevDmgTaken / data.ct);
-      const newCrits = Math.floor(totalDmgTaken / data.ct);
-      if (newCrits > prevCrits && data.subsystems.length > 0) {
-        // Trigger critical — target specific or random subsystem
-        let target;
-        if (targetSubsystemId) {
-          target = data.subsystems.find(s => s.id === targetSubsystemId);
-        }
-        if (!target) {
-          target = data.subsystems[Math.floor(Math.random() * data.subsystems.length)];
-        }
-        if (target) {
-          escalateSubsystem(data, target.id);
-          report.critTriggered = true;
-          report.critSubsystem = target;
-        }
+    if (data.hull.current <= 0) { report.shipDestroyed = true; return report; }
+    const totalDmg = data.hull.max - data.hull.current;
+    const prevDmg = data.hull.max - prevHull;
+    if (data.ct > 0 && data.subsystems.length > 0) {
+      if (Math.floor(totalDmg / data.ct) > Math.floor(prevDmg / data.ct)) {
+        const target = targetSubsystemId ? data.subsystems.find(s => s.id === targetSubsystemId) : data.subsystems[Math.floor(Math.random() * data.subsystems.length)];
+        if (target) { escalateSubsystem(data, target.id); report.critTriggered = true; report.critSubsystem = target; }
       }
     }
-
-    // Random subsystem nick (10% chance if not already critting)
-    if (!report.critTriggered && !targetSubsystemId && data.subsystems.length > 0) {
-      if (Math.random() < 0.10) {
-        const target = data.subsystems[Math.floor(Math.random() * data.subsystems.length)];
-        escalateSubsystem(data, target.id);
-        report.subsystemHit = target;
-      }
+    if (!report.critTriggered && !targetSubsystemId && data.subsystems.length > 0 && Math.random() < 0.10) {
+      const target = data.subsystems[Math.floor(Math.random() * data.subsystems.length)];
+      escalateSubsystem(data, target.id);
+      report.subsystemHit = target;
     }
   }
-
   return report;
 }
 
+// ── Actor Sync (tier → level, name) ─────────────────────────────────────────
 
-// ── Create Starship Actor ───────────────────────────────────────────────────
+export async function syncActorFromShipData(actor, data) {
+  const updates = {};
+  // Sync name
+  if (data.name && data.name !== actor.name) {
+    updates.name = data.name;
+  }
+  // Sync tier → the actor's "level" display
+  // sf2e NPCs store level at system.details.level.value
+  const currentLevel = actor.system?.details?.level?.value ?? actor.system?.details?.cr ?? 0;
+  const tier = data.tier ?? 1;
+  if (currentLevel !== tier) {
+    // Try the sf2e NPC path first, fall back to generic
+    if (actor.system?.details?.level !== undefined) {
+      updates["system.details.level.value"] = tier;
+    }
+  }
+  if (Object.keys(updates).length > 0) {
+    await actor.update(updates);
+  }
+}
+
+// ── Create / Frame Apply ────────────────────────────────────────────────────
 
 export async function createStarshipActor(name = "New Starship", frameId = "explorer") {
   const availableTypes = game.documentTypes?.Actor ?? [];
   let baseType = availableTypes.includes("vehicle") ? "vehicle" : "npc";
-
   const actor = await Actor.create({
-    name,
-    type: baseType,
-    img: "icons/svg/ship.svg",
-    flags: {
-      [MODULE_ID]: {
-        [IS_SHIP_FLAG]: true,
-        [FLAG_KEY]: buildDefaultShipData(name)
-      }
-    }
+    name, type: baseType, img: "icons/svg/ship.svg",
+    flags: { [MODULE_ID]: { [IS_SHIP_FLAG]: true, [FLAG_KEY]: buildDefaultShipData(name) } }
   });
-
   if (frameId && actor) await applyFrameToActor(actor, frameId);
   return actor;
 }
@@ -290,7 +201,6 @@ export async function createStarshipActor(name = "New Starship", frameId = "expl
 export async function applyFrameToActor(actor, frameId) {
   const frame = BASE_FRAMES[frameId];
   if (!frame || !actor) return;
-
   const data = getShipData(actor) ?? buildDefaultShipData(actor.name);
   data.frame = frameId;
   data.size = frame.size;
@@ -302,50 +212,34 @@ export async function applyFrameToActor(actor, frameId) {
   data.ct = frame.ct;
   data.speed = frame.speed;
   data.turnDistance = MANEUVERABILITY[frame.maneuverability]?.turn ?? 2;
+  data.cargoCapacity = frame.cargo ?? 20;
   data.name = actor.name;
-
   await setShipData(actor, data);
+  await syncActorFromShipData(actor, data);
 }
 
 export async function showCreateStarshipDialog() {
   const frameOptions = Object.entries(BASE_FRAMES).map(([k, v]) =>
-    `<option value="${k}">${v.name} (${SIZE_CATEGORIES[v.size]?.label}, HP ${v.hp})</option>`
+    `<option value="${k}">${v.name} (${SIZE_CATEGORIES[v.size]?.label}, HP ${v.hp}, Cargo ${v.cargo})</option>`
   ).join("");
-
   return new Promise(resolve => {
     new Dialog({
       title: "Create Starship",
-      content: `
-        <form>
-          <div class="form-group"><label>Ship Name</label><input type="text" name="shipName" value="New Starship" autofocus /></div>
-          <div class="form-group"><label>Base Frame</label><select name="frame">${frameOptions}</select></div>
-          <div class="form-group"><label>Disposition</label>
-            <select name="disposition">
-              <option value="friendly">Friendly</option>
-              <option value="enemy">Enemy</option>
-              <option value="neutral">Neutral</option>
-            </select>
-          </div>
-        </form>
-      `,
+      content: `<form><div class="form-group"><label>Ship Name</label><input type="text" name="shipName" value="New Starship" autofocus /></div><div class="form-group"><label>Base Frame</label><select name="frame">${frameOptions}</select></div><div class="form-group"><label>Disposition</label><select name="disposition"><option value="friendly">Friendly</option><option value="enemy">Enemy</option><option value="neutral">Neutral</option></select></div></form>`,
       buttons: {
-        create: {
-          icon: '<i class="fas fa-rocket"></i>', label: "Create Starship",
-          callback: async (html) => {
-            const form = html.find?.("form")?.[0] ?? html[0]?.querySelector("form");
-            const name = form?.shipName?.value || "New Starship";
-            const frame = form?.frame?.value || "explorer";
-            const disposition = form?.disposition?.value || "friendly";
-
-            const actor = await createStarshipActor(name, frame);
-            if (actor) {
-              const data = getShipData(actor);
-              if (data) { data.disposition = disposition; await setShipData(actor, data); }
-              ui.notifications.info(`Starship "${name}" created.`);
-            }
-            resolve(actor);
+        create: { icon: '<i class="fas fa-rocket"></i>', label: "Create Starship", callback: async (html) => {
+          const form = html.find?.("form")?.[0] ?? html[0]?.querySelector("form");
+          const name = form?.shipName?.value || "New Starship";
+          const frame = form?.frame?.value || "explorer";
+          const disposition = form?.disposition?.value || "friendly";
+          const actor = await createStarshipActor(name, frame);
+          if (actor) {
+            const data = getShipData(actor);
+            if (data) { data.disposition = disposition; await setShipData(actor, data); }
+            ui.notifications.info(`Starship "${name}" created.`);
           }
-        },
+          resolve(actor);
+        }},
         cancel: { icon: '<i class="fas fa-times"></i>', label: "Cancel", callback: () => resolve(null) }
       },
       default: "create"
@@ -353,81 +247,53 @@ export async function showCreateStarshipDialog() {
   });
 }
 
-
 // ── Weapon Compendium ───────────────────────────────────────────────────────
 
-/**
- * Create and populate a world compendium of starship weapons if it doesn't exist.
- * Uses sf2e-compatible Item format with weapon data stored in flags.
- */
 export async function ensureWeaponCompendium() {
   if (!game.user.isGM) return null;
-
-  const packName = `${MODULE_ID}-weapons`;
-  const packId = `world.${packName}`;
+  const packId = `world.${MODULE_ID}-weapons`;
   let pack = game.packs.get(packId);
-
-  // If pack exists and has items, we're done
   if (pack && pack.index.size > 0) return pack;
 
-  // Create the compendium if it doesn't exist
   if (!pack) {
     try {
       pack = await CompendiumCollection.createCompendium({
-        label: "Starship Weapons (FTL)",
-        type: "Item",
+        label: "Starship Weapons (FTL)", type: "Item",
         ownership: { PLAYER: "OBSERVER", ASSISTANT: "OWNER" }
       });
-      console.log(`${MODULE_ID} | Created weapon compendium`);
-    } catch (e) {
-      console.warn(`${MODULE_ID} | Could not create weapon compendium:`, e);
-      return null;
-    }
+    } catch (e) { console.warn(`${MODULE_ID} | Could not create weapon compendium:`, e); return null; }
   }
-
   if (!pack) return null;
 
-  // Group weapons by mount size for folder organization
-  const folders = {};
-  const mountLabels = { light: "Light Weapons", heavy: "Heavy Weapons", capital: "Capital Weapons" };
-
-  // Build item data from catalog
   const items = [];
   for (const [key, w] of Object.entries(WEAPON_CATALOG)) {
+    const bulk = MOUNT_BULK[w.mount]?.bulk ?? 1;
+    const ammoLabel = AMMO_CATEGORIES[w.ammo]?.label ?? "None";
     const typeLabel = w.type === "tracking" ? "Tracking" : "Direct-Fire";
-    const desc = [
-      `<p><strong>${typeLabel} ${w.mount} weapon</strong></p>`,
-      `<p>Damage: ${w.damage} | Range: ${w.range} | PCU: ${w.pcu} | BP: ${w.bp}</p>`,
-      w.speed ? `<p>Tracking Speed: ${w.speed} hexes | Class: ${w.trackingClass ?? "medium"}</p>` : "",
-    ].join("");
+    const desc = `<p><strong>${typeLabel} · ${w.mount} mount</strong></p><p><strong>Range:</strong> ${w.range} · <strong>PCU:</strong> ${w.pcu} · <strong>BP:</strong> ${w.bp}</p><p><strong>Ammo:</strong> ${ammoLabel}</p>${w.speed ? `<p><strong>Tracking Speed:</strong> ${w.speed} hexes (${w.trackingClass})</p>` : ""}`;
 
     items.push({
       name: w.name,
-      type: "equipment", // sf2e-safe type
+      type: "weapon",
       img: w.type === "tracking" ? "icons/svg/explosion.svg" : "icons/svg/sword.svg",
       system: {
         description: { value: desc },
-        traits: { value: [], rarity: "common" },
+        damage: { formula: w.damage, type: w.type === "tracking" ? "bludgeoning" : "fire" },
+        traits: { value: [] },
         quantity: 1,
-        bulk: { value: 0 }
+        bulk: { value: bulk },
+        rules: [
+          { key: "Note", text: `PCU: ${w.pcu} | BP: ${w.bp} | Range: ${w.range}` },
+          { key: "Note", text: `Ammo: ${ammoLabel}` }
+        ]
       },
-      flags: {
-        [MODULE_ID]: {
-          isStarshipWeapon: true,
-          weaponData: w,
-          catalogKey: key
-        }
-      }
+      flags: { [MODULE_ID]: { isStarshipWeapon: true, weaponData: w, catalogKey: key } }
     });
   }
 
-  // Create all items in the compendium
   try {
     await Item.createDocuments(items, { pack: pack.collection });
     console.log(`${MODULE_ID} | Populated weapon compendium with ${items.length} weapons`);
-  } catch (e) {
-    console.warn(`${MODULE_ID} | Error populating weapon compendium:`, e);
-  }
-
+  } catch (e) { console.warn(`${MODULE_ID} | Error populating weapon compendium:`, e); }
   return pack;
 }

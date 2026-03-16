@@ -1,5 +1,4 @@
 <div class="sc-player-sheet">
-
   <header class="sc-header">
     <img class="sc-portrait" src="{{img}}" />
     <div class="sc-header-info">
@@ -11,94 +10,38 @@
       </div>
     </div>
   </header>
-
   <div class="sc-bars-row">
-    <div class="sc-bar-group">
-      <div class="sc-bar-label">Hull {{hullCurrent}} / {{hullMax}}</div>
-      <div class="sc-bar sc-bar-hull"><div class="sc-bar-fill" style="width:{{hullPercent}}%"></div></div>
-    </div>
-    <div class="sc-bar-group">
-      <div class="sc-bar-label">Shields {{shieldCurrent}} / {{shieldMax}}</div>
-      <div class="sc-bar sc-bar-shield"><div class="sc-bar-fill" style="width:{{shieldPercent}}%"></div></div>
-    </div>
+    <div class="sc-bar-group"><div class="sc-bar-label">Hull {{hullCurrent}} / {{hullMax}}</div><div class="sc-bar sc-bar-hull"><div class="sc-bar-fill" style="width:{{hullPercent}}%"></div></div></div>
+    <div class="sc-bar-group"><div class="sc-bar-label">Shields {{shieldCurrent}} / {{shieldMax}}</div><div class="sc-bar sc-bar-shield"><div class="sc-bar-fill" style="width:{{shieldPercent}}%"></div></div></div>
   </div>
-
   <nav class="sc-tabs">
     <button type="button" class="sc-tab active" data-sc-tab="overview">Overview</button>
-    {{#each roles}}
-      <button type="button" class="sc-tab" data-sc-tab="role-{{this.id}}"><i class="fas {{this.icon}}"></i> {{this.label}}</button>
-    {{/each}}
-    <button type="button" class="sc-tab" data-sc-tab="inventory"><i class="fas fa-boxes-stacked"></i> Cargo</button>
+    {{#each roles}}<button type="button" class="sc-tab" data-sc-tab="role-{{this.id}}"><i class="fas {{this.icon}}"></i> {{this.label}}</button>{{/each}}
+    <button type="button" class="sc-tab" data-sc-tab="cargo"><i class="fas fa-boxes-stacked"></i> Cargo</button>
   </nav>
-
   <div class="sc-body">
-
-    {{!-- Overview --}}
     <div class="tab-pane active" data-sc-pane="overview">
       <div class="sc-overview-grid">
         <div>
           <div class="sc-section-header">Subsystems</div>
-          {{#each subsystems}}
-            <div class="sc-sub-status sc-sev-{{this.severity}}">
-              <i class="fas {{this.icon}}"></i>
-              <span>{{this.name}}</span>
-              <span class="sc-sub-cond sc-cond-{{this.severity}}">{{this.conditionLabel}}</span>
-            </div>
-          {{/each}}
+          {{#each subsystems}}<div class="sc-sub-status sc-sev-{{this.severity}}"><i class="fas {{this.icon}}"></i><span>{{this.name}}</span><span class="sc-sub-cond sc-cond-{{this.severity}}">{{this.conditionLabel}}</span></div>{{/each}}
         </div>
         <div>
           <div class="sc-section-header">Weapons</div>
-          {{#each weapons}}
-            <div class="sc-wep-status">
-              <strong>{{this.name}}</strong>
-              <span>{{this.damage}} · {{this.arcLabel}} · {{this.range}}</span>
-            </div>
-          {{/each}}
+          {{#each weapons}}<div class="sc-wep-status"><strong>{{this.name}}</strong><span>{{this.damage}} · {{this.arcLabel}} · {{this.ammoLabel}}</span></div>{{/each}}
           {{#unless weapons.length}}<p class="sc-empty">No weapons</p>{{/unless}}
         </div>
       </div>
-      {{#if notes}}
-        <div class="sc-notes-box">
-          <div class="sc-section-header">Notes</div>
-          <div style="padding:6px 0;">{{{notes}}}</div>
-        </div>
-      {{/if}}
+      {{#if notes}}<div class="sc-notes-box"><div class="sc-section-header">Notes</div><div style="padding:6px 0;">{{{notes}}}</div></div>{{/if}}
     </div>
-
-    {{!-- Role Tabs --}}
-    {{#each roles}}
-      <div class="tab-pane" data-sc-pane="role-{{this.id}}">
-        <div class="sc-section-header"><i class="fas {{this.icon}}"></i> {{this.label}}</div>
-        <p class="sc-hint">Actions for this role are available during starship combat. Open the combat panel to take your turn.</p>
-      </div>
-    {{/each}}
-
-    {{!-- Inventory Tab --}}
-    <div class="tab-pane" data-sc-pane="inventory">
-      <div class="sc-section-header">Cargo Hold <span class="sc-header-count">{{inventory.length}} items</span></div>
+    {{#each roles}}<div class="tab-pane" data-sc-pane="role-{{this.id}}"><div class="sc-section-header"><i class="fas {{this.icon}}"></i> {{this.label}}</div><p class="sc-hint">Actions available during starship combat via the combat panel.</p></div>{{/each}}
+    <div class="tab-pane" data-sc-pane="cargo">
+      <div class="sc-section-header">Cargo Hold <span class="sc-count">Capacity: {{cargoCapacity}}</span></div>
       <div class="sc-inv-table">
-        <div class="sc-inv-header">
-          <span class="sc-inv-col-name">Item</span>
-          <span class="sc-inv-col-val">Value</span>
-          <span class="sc-inv-col-qty">Qty</span>
-          <span class="sc-inv-col-bulk">Bulk</span>
-        </div>
-        {{#each inventory}}
-          <div class="sc-inv-row">
-            <span class="sc-inv-col-name"><img src="{{this.img}}" width="20" height="20" /> {{this.name}}</span>
-            <span class="sc-inv-col-val">{{this.value}}</span>
-            <span class="sc-inv-col-qty">{{this.quantity}}</span>
-            <span class="sc-inv-col-bulk">{{this.bulk}}</span>
-          </div>
-        {{/each}}
-        {{#unless hasInventory}}
-          <div class="sc-inv-empty">
-            <i class="fas fa-boxes-stacked"></i>
-            <p>No cargo aboard</p>
-          </div>
-        {{/unless}}
+        <div class="sc-inv-header"><span class="sc-inv-col-name">Item</span><span class="sc-inv-col-val">Value</span><span class="sc-inv-col-qty">Qty</span><span class="sc-inv-col-bulk">Bulk</span></div>
+        {{#each inventory}}<div class="sc-inv-row"><span class="sc-inv-col-name"><img src="{{this.img}}" width="20" height="20" />{{this.name}}</span><span class="sc-inv-col-val">{{this.value}}</span><span class="sc-inv-col-qty">{{this.quantity}}</span><span class="sc-inv-col-bulk">{{this.bulk}}</span></div>{{/each}}
+        {{#unless hasInventory}}<div class="sc-inv-empty"><i class="fas fa-boxes-stacked"></i><p>No cargo aboard</p></div>{{/unless}}
       </div>
     </div>
-
   </div>
 </div>
