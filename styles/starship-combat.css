@@ -32,12 +32,28 @@
   --sc-stat-tl: #4b6584;
 }
 
-/* ── Application Shell ────────────────────────────────────────────────────── */
-.sc-gm-sheet,
-.sc-player-sheet {
+/* ── ApplicationV2 Window Integration ─────────────────────────────────────── *
+ * ApplicationV2 adds our classes (sc-gm-sheet, sc-player-sheet) to the
+ * outer .application wrapper, NOT just our template root. The .window-content
+ * element wraps our template. We must:
+ *   1. Make .window-content a flex container so our sidebar layout works
+ *   2. NEVER style bare `header` inside .sc-gm-sheet — that hits .window-header
+ *   3. Only style headers inside .sc-main (our content area)
+ */
+/* Reset window-content padding so our layout fills the space */
+.sc-gm-sheet > .window-content,
+.sc-player-sheet > .window-content {
+  padding: 0 !important;
+  overflow: hidden !important;
+  background: var(--sc-parchment) !important;
+}
+
+/* Template root — the flex container for sidebar + main */
+.sc-sheet-layout {
   display: flex;
   flex-direction: row;
   height: 100%;
+  width: 100%;
   overflow: hidden;
   background: var(--sc-parchment);
   color: var(--sc-text);
@@ -59,7 +75,6 @@
   overflow-x: hidden;
   flex-shrink: 0;
 }
-
 .sc-sidebar::-webkit-scrollbar { width: 4px; }
 .sc-sidebar::-webkit-scrollbar-thumb { background: var(--sc-border); border-radius: 2px; }
 
@@ -70,7 +85,7 @@
   aspect-ratio: 1;
   overflow: hidden;
   border-bottom: 2px solid var(--sc-border);
-  background: #000;
+  background: #1c1c1c;
 }
 .sc-sidebar-portrait img {
   width: 100%;
@@ -330,9 +345,11 @@
 .tab-pane { display: none; padding: 10px 14px 14px; }
 .tab-pane.active { display: block; }
 
-/* ── Section Headers (PF2e <header> bars) ─────────────────────────────────── */
-.sc-gm-sheet header,
-.sc-player-sheet header {
+/* ── Section Headers (PF2e <header> bars) ─────────────────────────────────── *
+ * CRITICAL: Scoped to .sc-main ONLY — prevents styling Foundry's
+ * .window-header which is ALSO a <header> inside the .sc-gm-sheet wrapper.
+ */
+.sc-main header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -348,18 +365,14 @@
   line-height: 1.6;
   min-height: 26px;
 }
-.sc-gm-sheet header:first-child,
-.sc-player-sheet header:first-child,
 .tab-pane > header:first-child { margin-top: 0; }
 
-.sc-gm-sheet header .controls,
-.sc-player-sheet header .controls {
+.sc-main header .controls {
   display: flex;
   gap: 4px;
   align-items: center;
 }
-.sc-gm-sheet header .controls button,
-.sc-player-sheet header .controls button {
+.sc-main header .controls button {
   font-size: 0.7rem;
   font-weight: 600;
   padding: 2px 8px;
@@ -376,8 +389,7 @@
   align-items: center;
   gap: 3px;
 }
-.sc-gm-sheet header .controls button:hover,
-.sc-player-sheet header .controls button:hover {
+.sc-main header .controls button:hover {
   background: rgba(255,255,255,0.2);
   border-color: rgba(255,255,255,0.4);
 }
@@ -707,7 +719,7 @@
   font-family: var(--font-primary, 'Signika', serif);
 }
 .sc-full-select {
-  width: 100%;
+  display: block;
   padding: 4px 6px;
   font-size: 0.82rem;
   border: 1px solid var(--sc-border);
@@ -912,10 +924,3 @@
   font-family: var(--font-primary, 'Signika', serif);
 }
 .sc-create-btn:hover { background: rgba(82,46,44,1); border-color: rgba(255,255,255,0.4); }
-
-/* ── Responsive: collapse sidebar on narrow windows ───────────────────────── */
-@container (max-width: 500px) {
-  .sc-gm-sheet, .sc-player-sheet { flex-direction: column; }
-  .sc-sidebar { width: 100%; min-width: 100%; flex-direction: row; border-right: none; border-bottom: 2px solid var(--sc-border); overflow-y: visible; }
-  .sc-sidebar-portrait { width: 80px; aspect-ratio: 1; border-bottom: none; border-right: 2px solid var(--sc-border); }
-}
