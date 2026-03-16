@@ -1,0 +1,178 @@
+{{!-- ═══════════════════════════════════════════════════════════════════════
+     STARSHIP COMBAT — FTL EDITION v3.1 — Player Sheet
+     Layout: PF2e-style sidebar + tabbed main content (read-only)
+     ═══════════════════════════════════════════════════════════════════════ --}}
+
+<div class="sc-player-sheet">
+
+  {{!-- ─── SIDEBAR ─────────────────────────────────────────────────────── --}}
+  <aside class="sc-sidebar">
+
+    {{!-- Portrait --}}
+    <div class="sc-sidebar-portrait">
+      <img src="{{img}}" alt="{{name}}" />
+    </div>
+
+    {{!-- Name & Tags --}}
+    <div class="sc-sidebar-identity">
+      <h2 class="sc-sidebar-name-ro">{{name}}</h2>
+      <div class="sc-sidebar-tags">
+        <span class="sc-tag sc-tag-size">{{data.size}}</span>
+        <span class="sc-tag sc-tag-frame">{{data.frame}}</span>
+      </div>
+    </div>
+
+    {{!-- AC / TL Defense Boxes --}}
+    <div class="sc-sidebar-defenses">
+      <div class="sc-defense-box sc-defense-ac">
+        <span class="sc-defense-value">{{ac}}</span>
+        <span class="sc-defense-label">AC</span>
+      </div>
+      <div class="sc-defense-box sc-defense-tl">
+        <span class="sc-defense-value">{{tl}}</span>
+        <span class="sc-defense-label">TL</span>
+      </div>
+    </div>
+
+    {{!-- Hull & Shield Bars --}}
+    <div class="sc-sidebar-vitals">
+      <div class="sc-vital sc-vital-hull">
+        <div class="sc-vital-header">
+          <span class="sc-vital-label">Hull</span>
+          <span class="sc-vital-numbers">{{hullCurrent}} / {{hullMax}}</span>
+        </div>
+        <div class="sc-vital-bar">
+          <div class="sc-vital-bar-fill" style="width:{{hullPercent}}%"></div>
+        </div>
+      </div>
+      <div class="sc-vital sc-vital-shield">
+        <div class="sc-vital-header">
+          <span class="sc-vital-label">Shields</span>
+          <span class="sc-vital-numbers">{{shieldCurrent}} / {{shieldMax}}</span>
+        </div>
+        <div class="sc-vital-bar">
+          <div class="sc-vital-bar-fill" style="width:{{shieldPercent}}%"></div>
+        </div>
+      </div>
+    </div>
+
+    {{!-- Quick Stats --}}
+    <div class="sc-sidebar-stats">
+      <ul class="sc-sidebar-stats-list">
+        <li><span class="sc-stat-label">Speed</span><span class="sc-stat-value">{{speed}}</span></li>
+        <li><span class="sc-stat-label">Tier</span><span class="sc-stat-value">{{data.tier}}</span></li>
+      </ul>
+    </div>
+
+  </aside>
+
+  {{!-- ─── MAIN CONTENT ───────────────────────────────────────────────── --}}
+  <div class="sc-main">
+
+    {{!-- Tab Navigation --}}
+    <nav class="sc-nav">
+      <button type="button" class="sc-tab active" data-sc-tab="overview"><i class="fa-solid fa-gauge"></i> Overview</button>
+      {{#each roles}}
+      <button type="button" class="sc-tab" data-sc-tab="role-{{this.id}}"><i class="fas {{this.icon}}"></i> {{this.label}}</button>
+      {{/each}}
+      <button type="button" class="sc-tab" data-sc-tab="cargo"><i class="fa-solid fa-boxes-stacked"></i> Cargo</button>
+    </nav>
+
+    {{!-- Scrollable Body --}}
+    <div class="sc-body">
+
+      {{!-- ═══ OVERVIEW TAB ═══ --}}
+      <div class="tab-pane active" data-sc-pane="overview">
+
+        <div class="sc-overview-grid">
+
+          {{!-- Subsystems Column --}}
+          <div>
+            <header>
+              <span>Subsystems</span>
+            </header>
+            <ol class="sc-directory-list">
+              {{#each subsystems}}
+              <li class="sc-sub-status sc-sev-{{this.severity}}">
+                <i class="fas {{this.icon}}"></i>
+                <span>{{this.name}}</span>
+                <span class="sc-sub-cond sc-cond-{{this.severity}}">{{this.conditionLabel}}</span>
+              </li>
+              {{/each}}
+              {{#unless subsystems.length}}<li class="sc-empty">No subsystems</li>{{/unless}}
+            </ol>
+          </div>
+
+          {{!-- Weapons Column --}}
+          <div>
+            <header>
+              <span>Weapons</span>
+            </header>
+            <ol class="sc-directory-list">
+              {{#each weapons}}
+              <li class="sc-wep-status">
+                <strong>{{this.name}}</strong>
+                <span>{{this.damage}} · {{this.arcLabel}} · {{this.ammoLabel}}</span>
+              </li>
+              {{/each}}
+              {{#unless weapons.length}}<li class="sc-empty">No weapons</li>{{/unless}}
+            </ol>
+          </div>
+
+        </div>
+
+        {{!-- Notes --}}
+        {{#if notes}}
+        <header>
+          <span>Notes</span>
+        </header>
+        <div class="sc-notes-box">{{{notes}}}</div>
+        {{/if}}
+
+      </div>
+
+      {{!-- ═══ ROLE TABS ═══ --}}
+      {{#each roles}}
+      <div class="tab-pane" data-sc-pane="role-{{this.id}}">
+        <header>
+          <span><i class="fas {{this.icon}}"></i> {{this.label}}</span>
+        </header>
+        <div class="sc-role-placeholder">
+          <i class="fas {{this.icon}}"></i>
+          <p><strong>{{this.label}}</strong></p>
+          <p>Actions available during starship combat via the combat panel.</p>
+        </div>
+      </div>
+      {{/each}}
+
+      {{!-- ═══ CARGO TAB ═══ --}}
+      <div class="tab-pane" data-sc-pane="cargo">
+
+        <header>
+          <span>Cargo Hold<span class="sc-header-count">Capacity: {{cargoCapacity}}</span></span>
+        </header>
+        <div class="sc-inv-table">
+          <div class="sc-inv-header">
+            <span class="sc-inv-col-name">Item</span>
+            <span class="sc-inv-col-val">Value</span>
+            <span class="sc-inv-col-qty">Qty</span>
+            <span class="sc-inv-col-bulk">Bulk</span>
+          </div>
+          {{#each inventory}}
+          <div class="sc-inv-row">
+            <span class="sc-inv-col-name"><img src="{{this.img}}" width="24" height="24" /><span>{{this.name}}</span></span>
+            <span class="sc-inv-col-val">{{this.value}}</span>
+            <span class="sc-inv-col-qty">{{this.quantity}}</span>
+            <span class="sc-inv-col-bulk">{{this.bulk}}</span>
+          </div>
+          {{/each}}
+          {{#unless hasInventory}}
+          <div class="sc-inv-empty"><i class="fas fa-boxes-stacked"></i><p>No cargo aboard</p></div>
+          {{/unless}}
+        </div>
+
+      </div>
+
+    </div>{{!-- .sc-body --}}
+  </div>{{!-- .sc-main --}}
+</div>{{!-- .sc-player-sheet --}}
